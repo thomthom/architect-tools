@@ -26,7 +26,7 @@
 require 'sketchup.rb'
 require 'TT_Lib2/core.rb'
 
-TT::Lib.compatible?('2.5.0', 'TT Plan Tools')
+TT::Lib.compatible?('2.5.1', 'TT Plan Tools')
 
 #-----------------------------------------------------------------------------
 
