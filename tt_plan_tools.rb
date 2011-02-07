@@ -4,7 +4,10 @@
 #-----------------------------------------------------------------------------
 #
 # CHANGELOG
-# 1.2.0 - 14.01.2011
+# 1.2.0 - 07.02.2011
+#		 * Grid divide bug fix.
+#
+# 1.2.0 - 05.02.2011
 #		 * Generate Buildings improvements.
 #
 # 1.1.0 - 30.09.2010
@@ -31,7 +34,7 @@ module TT::Plugins::PlanTools
   
   ### CONSTANTS ### --------------------------------------------------------
   
-  VERSION = '1.2.0'.freeze
+  VERSION = '1.2.1'.freeze
   PREF_KEY = 'TT_Plan'.freeze
   
   
