@@ -355,6 +355,7 @@ module TT::Plugins::PlanTools
       p1 = e.start.position
       p2 = e.end.position
       pt = Geom.intersect_line_plane( e.line, plane )
+      next unless pt
       next unless TT::Point3d.between?( p1, p2, pt, false )
       #e.parent.entities.add_cpoint( pt )
       e.explode_curve
