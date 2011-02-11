@@ -533,7 +533,9 @@ module TT::Plugins::PlanTools
     # Intersect
     splits = 0
     edges = entities.select { |e| e.is_a?(Sketchup::Edge) }
+    progress = TT::Progressbar.new( edges, 'Intersecting edges' ) # (!) Inaccurate!
     until edges.empty?
+      progress.next
       e = edges.shift
       
       # Get global position
@@ -577,8 +579,10 @@ module TT::Plugins::PlanTools
     end # until
     
     # Crop
+    progress = TT::Progressbar.new( entities, 'Detecting edges outside boundary' )
     outside = []
     for e in entities
+      progress.next
       if e.is_a?( Sketchup::ConstructionPoint )
         point = e.position.transform(transformation).project_to_plane(face.plane)
         if face.classify_point(point) > 4
@@ -590,6 +594,7 @@ module TT::Plugins::PlanTools
         pts = e.vertices.map { |v| v.position.transform(transformation) }
         p1, p2 = pts.map! { |pt| pt.project_to_plane(face.plane) }
         v = p1.vector_to(p2)
+        next unless v.valid? # (i) Incase of perpendicular edges.
         tp1 = p1.offset( v, 0.1 )
         tp2 = p2.offset( v.reverse!, 0.1 )
         if face.classify_point(tp1) > 4 || face.classify_point(tp2) > 4
@@ -597,6 +602,7 @@ module TT::Plugins::PlanTools
         end
       end
     end # for
+    Sketchup.status_text = 'Erasing edges...'
     entities.erase_entities(outside)
     
     # Recurse
