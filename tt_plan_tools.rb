@@ -34,7 +34,7 @@ module TT::Plugins::PlanTools
   
   ### CONSTANTS ### --------------------------------------------------------
   
-  VERSION = '1.2.1'.freeze
+  VERSION = '1.3.0'.freeze
   PREF_KEY = 'TT_Plan'.freeze
   
   
@@ -53,6 +53,8 @@ module TT::Plugins::PlanTools
   unless file_loaded?( __FILE__ )
     m = TT.menu('Plugins').add_submenu('Plan Tools')
     m.add_item('Generate Buildings')            { self.generate_buildings }
+    m.add_item('Merge Solid Buildings')         { self.merge_solid_buildings }
+    m.add_item('Select Non-Solids')             { self.select_non_solids }
     m.add_separator
     m.add_item('Make 2:1 Road Profile')         { self.make_road_profile }
     m.add_separator
@@ -290,6 +292,75 @@ module TT::Plugins::PlanTools
     str = "Buildings generated in #{total_progress.elapsed_time(true)}\n(#{buildings} volumes)"
     TT::debug str
     Sketchup.status_text = str
+  end
+  
+  
+  ##############################################################################
+  
+  
+  def self.merge_solid_buildings
+    model = Sketchup.active_model
+    selection = model.selection
+    # Ensure that the running SketchUp version support solids.
+    unless Sketchup::Group.method_defined?( :manifold? )
+      UI.messagebox( 'This function require SketchUp 8 or newer.' )
+    end
+    # Ensure the selection contain only solids.
+    unless selection.all? { |entity|
+      TT::Instance.is?( entity ) && entity.manifold?
+    }
+      UI.messagebox( 'Select a set of solids.' )
+    end
+    TT::Model.start_operation( 'Merge Solid Buildings' )
+    original_entities = model.active_entities.to_a
+    # Explode everything.
+    for instance in selection
+      instance.explode
+    end
+    # Clean up bottom and internal faces.
+    # * Get faces on ground - facing down.
+    ground = Z_AXIS.reverse
+    ground_faces = selection.select { |entity|
+      entity.is_a?( Sketchup::Face ) &&
+      entity.normal.samedirection?( ground ) &&
+      entity.vertices.all? { |vertex| vertex.position.z == 0.0 }
+    }
+    # * Find internal edges.
+    internal = []
+    for face in ground_faces
+      for loop in face.loops
+        if loop.outer?
+          for edge in loop.edges
+            internal << edge if edge.faces.size > 2
+          end
+        else
+          internal.concat( loop.edges )
+        end
+      end
+    end
+    # * Find connected vertical faces and edges.
+    for edge in internal.to_a
+      connected = edge.faces - ground_faces
+      # (!) Add connected edges (subtract ground-face-edges )
+      internal.concat( connected )
+    end
+    # * Erase faces and edges not belonging to an border edge.
+    model.active_entities.erase_entities( internal )
+    # Done! :)
+    model.commit_operation
+  end
+  
+  
+  ##############################################################################
+  
+  
+  def self.select_non_solids
+    model = Sketchup.active_model
+    non_solids = model.selection.select { |entity|
+      TT::Instance.is?( entity ) && !entity.manifold?
+    }
+    model.selection.clear
+    model.selection.add( non_solids )
   end
   
   
