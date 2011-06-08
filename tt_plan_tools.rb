@@ -301,9 +301,16 @@ module TT::Plugins::PlanTools
   def self.merge_solid_buildings
     model = Sketchup.active_model
     selection = model.selection
+    entities = model.active_entities
     # Ensure that the running SketchUp version support solids.
     unless Sketchup::Group.method_defined?( :manifold? )
       UI.messagebox( 'This function require SketchUp 8 or newer.' )
+    end
+    # Check if a single instance is selected - then the content is processed.
+    if selection.length == 1 && TT::Instance.is?( selection[0] )
+      definition = TT::Instance.definition( selection[0] )
+      entities = definition.entities
+      selection = definition.entities
     end
     # Ensure the selection contain only solids.
     unless selection.all? { |entity|
@@ -312,19 +319,24 @@ module TT::Plugins::PlanTools
       UI.messagebox( 'Select a set of solids.' )
     end
     TT::Model.start_operation( 'Merge Solid Buildings' )
-    original_entities = model.active_entities.to_a
+    original_entities = entities.to_a
     # Explode everything.
-    for instance in selection
+    for instance in selection.to_a
       instance.explode
     end
+    exploded_entities = entities.to_a - original_entities
     # Clean up bottom and internal faces.
     # * Get faces on ground - facing down.
     ground = Z_AXIS.reverse
-    ground_faces = selection.select { |entity|
+    ground_faces = exploded_entities.select { |entity|
       entity.is_a?( Sketchup::Face ) &&
       entity.normal.samedirection?( ground ) &&
       entity.vertices.all? { |vertex| vertex.position.z == 0.0 }
     }
+    # * Get edges on ground.
+    ground_edges = ground_faces.map { |face| face.edges }
+    ground_edges.flatten!
+    ground_edges.uniq!
     # * Find internal edges.
     internal = []
     for face in ground_faces
@@ -339,13 +351,19 @@ module TT::Plugins::PlanTools
       end
     end
     # * Find connected vertical faces and edges.
-    for edge in internal.to_a
+    for edge in internal.dup # Array.to_a returns self !
+      # Add connected faces (subtract ground_faces )
       connected = edge.faces - ground_faces
-      # (!) Add connected edges (subtract ground-face-edges )
+      # Add connected edges (subtract ground_edges )
+      edges = edge.vertices.map { |vertex| vertex.edges }
+      edges.flatten!
+      edges -= ground_edges
+      edges << edge
+      # Append...
       internal.concat( connected )
     end
     # * Erase faces and edges not belonging to an border edge.
-    model.active_entities.erase_entities( internal )
+    entities.erase_entities( internal )
     # Done! :)
     model.commit_operation
   end
@@ -699,6 +717,7 @@ module TT::Plugins::PlanTools
   
   ### DEBUG ### ------------------------------------------------------------  
   
+  # TT::Plugins::PlanTools.reload
   def self.reload
     load __FILE__
   end
