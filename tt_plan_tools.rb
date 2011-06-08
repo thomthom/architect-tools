@@ -350,6 +350,7 @@ module TT::Plugins::PlanTools
     # Ensure that the running SketchUp version support solids.
     unless Sketchup::Group.method_defined?( :manifold? )
       UI.messagebox( 'This function require SketchUp 8 or newer.' )
+      return false
     end
     # Check if a single instance is selected - then the content is processed.
     if selection.length == 1 && TT::Instance.is?( selection[0] )
@@ -362,6 +363,7 @@ module TT::Plugins::PlanTools
       TT::Instance.is?( entity ) && entity.manifold?
     }
       UI.messagebox( 'Select a set of solids.' )
+      return false
     end
     TT::Model.start_operation( 'Merge Solid Buildings' )
     original_entities = entities.to_a
