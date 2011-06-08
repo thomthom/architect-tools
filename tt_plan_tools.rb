@@ -54,6 +54,7 @@ module TT::Plugins::PlanTools
     m = TT.menu('Plugins').add_submenu('Plan Tools')
     m.add_item('Generate Buildings')            { self.generate_buildings }
     m.add_item('Merge Solid Buildings')         { self.merge_solid_buildings }
+    m.add_item('Fill Solid Holes')              { self.fill_solid_holes }
     m.add_item('Select Non-Solids')             { self.select_non_solids }
     m.add_separator
     m.add_item('Make 2:1 Road Profile')         { self.make_road_profile }
@@ -292,6 +293,50 @@ module TT::Plugins::PlanTools
     str = "Buildings generated in #{total_progress.elapsed_time(true)}\n(#{buildings} volumes)"
     TT::debug str
     Sketchup.status_text = str
+  end
+  
+  
+  ##############################################################################
+  
+  
+  def self.fill_solid_holes
+    model = Sketchup.active_model
+    selection = model.selection
+    # Ensure that the running SketchUp version support solids.
+    unless Sketchup::Group.method_defined?( :manifold? )
+      UI.messagebox( 'This function require SketchUp 8 or newer.' )
+      return false
+    end
+    # Get all solids in selection.
+    solids = selection.select { |entity|
+      TT::Instance.is?( entity ) && entity.manifold?
+    }
+    if solids.empty?
+      UI.messagebox( 'Select one of more solids.' )
+      return false
+    end
+    # Close all holes in solids.
+    TT::Model.start_operation( 'Fill Solid Holes' )
+    for solid in solids
+      definition = TT::Instance.definition( solid )
+      for entity in definition.entities
+        next unless entity.is_a?( Sketchup::Face )
+        holes = []
+        for loop in entity.loops
+          next if loop.outer?
+          faces = loop.edges.map { |edge| edge.faces }
+          faces.flatten!
+          faces -= [entity] # Remove current face.
+          holes.concat( faces )
+          for face in faces
+            holes.concat( face.edges )
+          end
+        end
+        definition.entities.erase_entities( holes )
+      end
+    end
+    # Done! :)
+    model.commit_operation
   end
   
   
