@@ -546,7 +546,7 @@ module TT::Plugins::PlanTools
   class MoveToZTool
     
     def activate
-      @height = nil
+      @height = @height = average_z( Sketchup.active_model.selection )
       update_ui()
     end
     
