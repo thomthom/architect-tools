@@ -4,7 +4,7 @@
 #-----------------------------------------------------------------------------
 #
 # CHANGELOG
-# 1.2.0 - 07.02.2011
+# 1.2.1 - 07.02.2011
 #		 * Grid divide bug fix.
 #
 # 1.2.0 - 05.02.2011
@@ -58,6 +58,7 @@ module TT::Plugins::PlanTools
     m.add_item('Select Non-Solids')             { self.select_non_solids }
     m.add_separator
     m.add_item('Make 2:1 Road Profile')         { self.make_road_profile }
+    m.add_item('Move to Z')                     { self.move_to_z }
     m.add_separator
     m.add_item('Flatten Selection')             { self.flatten_selection }
     m.add_item('Crop Selection to Boundary')    { self.crop_selection }
@@ -531,6 +532,100 @@ module TT::Plugins::PlanTools
     
     model.commit_operation
   end
+  
+  
+  ##############################################################################
+  
+  
+  # @since 1.3.0
+  def self.move_to_z
+    Sketchup.active_model.select_tool( MoveToZTool.new )
+  end
+  
+  # @since 1.3.0
+  class MoveToZTool
+    
+    def activate
+      @height = nil
+      update_ui()
+    end
+    
+    def enableVCB?
+      true
+    end
+    
+    def resume( view )
+      update_ui()
+    end
+ 
+    def onLButtonDown( flags, x, y, view )
+      ph = view.pick_helper
+      ph.do_pick( x, y )
+      picked = ph.best_picked
+      view.model.selection.clear
+      if picked
+        view.model.selection.add( picked )
+        @height = average_z( [ picked ] )
+      else
+        @height = nil
+      end
+      update_ui()
+    end
+    
+    def onUserText( text, view )
+      begin
+        height = text.to_l
+      rescue
+        height = nil
+      end
+      @height = height
+      update_ui
+      if height
+        vertices = vertices_from_entities( view.model.selection )
+        vectors = []
+        entities = []
+        for vertex in vertices
+          old_pt = vertex.position
+          new_pt = vertex.position
+          new_pt.z = height
+          vector = old_pt.vector_to( new_pt )
+          if vector.valid?
+            vectors << vector
+            entities << vertex
+          end
+        end
+        TT::Model.start_operation( 'Move to Z' )
+        view.model.active_entities.transform_by_vectors( entities, vectors )
+        view.model.commit_operation
+      end
+    end
+    
+    def update_ui
+      Sketchup.vcb_label = 'Height '
+      Sketchup.vcb_value = @height
+    end
+    
+    private
+    
+    def vertices_from_entities( entities )
+      vertices = []
+      for entity in entities
+        next unless entity.respond_to?( :vertices )
+        vertices.concat( entity.vertices )
+      end
+      vertices.uniq
+    end
+    
+    def average_z( entities )
+      total = 0.0
+      vertices = vertices_from_entities( entities )
+      for vertex in vertices
+        total += vertex.position.z
+      end
+      ( total / vertices.size ).to_l
+    end
+    
+  end # class MoveToZTool
   
   
   ##############################################################################
