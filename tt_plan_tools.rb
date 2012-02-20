@@ -1,22 +1,4 @@
 #-----------------------------------------------------------------------------
-# Compatible: SketchUp 7 (PC)
-#             (other versions untested)
-#-----------------------------------------------------------------------------
-#
-# CHANGELOG
-# 1.2.0 - 07.02.2011
-#		 * Grid divide bug fix.
-#
-# 1.2.0 - 05.02.2011
-#		 * Generate Buildings improvements.
-#
-# 1.1.0 - 30.09.2010
-#		 * Grid Divide.
-#
-# 1.0.2 - 01.09.2010
-#		 * Initial release.
-#
-#-----------------------------------------------------------------------------
 #
 # Thomas Thomassen
 # thomas[at]thomthom[dot]net
@@ -26,7 +8,7 @@
 require 'sketchup.rb'
 require 'TT_Lib2/core.rb'
 
-TT::Lib.compatible?('2.5.3', 'TT Plan Tools')
+TT::Lib.compatible?('2.7.0', 'TT Plan Tools')
 
 #-----------------------------------------------------------------------------
 
@@ -34,14 +16,19 @@ module TT::Plugins::PlanTools
   
   ### CONSTANTS ### --------------------------------------------------------
   
-  VERSION = '1.3.0'.freeze
-  PREF_KEY = 'TT_Plan'.freeze
+  # Plugin information
+  PLUGIN_ID       = 'TT_Plan'.freeze
+  PLUGIN_NAME     = 'Plan Tools'.freeze
+  PLUGIN_VERSION  = TT::Version.new(2,0,0).freeze
+  
+  # Version information
+  RELEASE_DATE    = '21 Oct 10'.freeze
   
   
   ### MODULE VARIABLES ### -------------------------------------------------
   
   # Preference
-  @settings = TT::Settings.new(PREF_KEY)
+  @settings = TT::Settings.new(PLUGIN_ID)
   @settings.set_default( :gb_filter, '5003,5014,5081' ) # 5001,5003,5014,5041,5080,5081,5082
   @settings.set_default( :gb_low_pt, 'Lowest Point Above' )
   @settings.set_default( :gb_epsilon, 100.mm )
@@ -63,6 +50,20 @@ module TT::Plugins::PlanTools
     m.add_item('Crop Selection to Boundary')    { self.crop_selection }
     m.add_separator
     m.add_item('Grid Divide')                   { self.grid_divide_ui }
+  end
+  
+  
+  ### LIB FREDO UPDATER ### ----------------------------------------------------
+  
+  def self.register_plugin_for_LibFredo6
+    {   
+      :name => PLUGIN_NAME,
+      :author => 'thomthom',
+      :version => PLUGIN_VERSION.to_s,
+      :date => RELEASE_DATE,   
+      :description => 'Tools for generating site plan models, generate buildings and roads.',
+      :link_info => 'http://forums.sketchucation.com/viewtopic.php?f=323&t=30512'
+    }
   end
   
   
@@ -435,7 +436,7 @@ module TT::Plugins::PlanTools
   def self.grid_divide_ui
     options = {
       :title => 'Grid Divide',
-      :pref_key => PREF_KEY,
+      :pref_key => PLUGIN_ID,
       :modal => true,
       :accept_label => 'Divide'
     }
