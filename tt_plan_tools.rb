@@ -1,20 +1,20 @@
-#-----------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 #
 # Thomas Thomassen
 # thomas[at]thomthom[dot]net
 #
-#-----------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 
 require 'sketchup.rb'
 require 'TT_Lib2/core.rb'
 
 TT::Lib.compatible?('2.7.0', 'TT Plan Tools')
 
-#-----------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 
 module TT::Plugins::PlanTools
   
-  ### CONSTANTS ### --------------------------------------------------------
+  ### CONSTANTS ### ------------------------------------------------------------
   
   # Plugin information
   PLUGIN_ID       = 'TT_Plan'.freeze
@@ -24,8 +24,13 @@ module TT::Plugins::PlanTools
   # Version information
   RELEASE_DATE    = '21 Oct 10'.freeze
   
+  # Resource paths
+  PATH_ROOT   = File.dirname( __FILE__ ).freeze
+  PATH        = File.join( PATH_ROOT, 'TT_PlanTools' ).freeze
+  PATH_ICONS  = File.join( PATH, 'Icons' ).freeze
   
-  ### MODULE VARIABLES ### -------------------------------------------------
+  
+  ### MODULE VARIABLES ### -----------------------------------------------------
   
   # Preference
   @settings = TT::Settings.new(PLUGIN_ID)
@@ -35,22 +40,101 @@ module TT::Plugins::PlanTools
   @settings.set_default( :gb_group,   'No' )
   
   
-  ### MENU & TOOLBARS ### --------------------------------------------------
+  ### MENU & TOOLBARS ### ------------------------------------------------------
   
   unless file_loaded?( __FILE__ )
-    m = TT.menu('Plugins').add_submenu('Plan Tools')
-    m.add_item('Generate Buildings')            { self.generate_buildings }
-    m.add_item('Merge Solid Buildings')         { self.merge_solid_buildings }
-    m.add_item('Fill Solid Holes')              { self.fill_solid_holes }
-    m.add_item('Select Non-Solids')             { self.select_non_solids }
+    # Commands
+    cmd = UI::Command.new( 'Generate Buildings' ) { self.generate_buildings }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.status_bar_text = 'Generate Buildings from CAD plan.'
+    cmd.tooltip = 'Generate Buildings'
+    cmd_generate_buildings = cmd
+    
+    cmd = UI::Command.new( 'Merge Solid Buildings' ) { self.merge_solid_buildings }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Merge Solid Buildings'
+    cmd_merge_solid_buildings = cmd
+    
+    cmd = UI::Command.new( 'Fill Solid Holes' ) { self.fill_solid_holes }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Fill Solid Holes'
+    cmd_fill_solid_holes = cmd
+    
+    cmd = UI::Command.new( 'Select Non-Solids' ) { self.select_non_solids }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Select Non-Solids'
+    cmd_select_non_solids = cmd
+    
+    cmd = UI::Command.new( 'Make 2:1 Road Profile' ) { self.make_road_profile }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Make 2:1 Road Profile'
+    cmd_make_road_profile = cmd
+    
+    cmd = UI::Command.new( 'Move to Z' ) { self.move_to_z }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.status_bar_text = 'Moves all selected vertices to the given Z height.'
+    cmd.tooltip = 'Move to Z'
+    cmd_move_to_z = cmd
+    
+    cmd = UI::Command.new( 'Flatten Selection' ) { self.flatten_selection }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Flatten Selection'
+    cmd_flatten_selection = cmd
+    
+    cmd = UI::Command.new( 'Crop Selection to Boundary' ) { self.crop_selection }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Crop Selection to Boundary'
+    cmd_crop_selection = cmd
+    
+    cmd = UI::Command.new( 'Grid Divide' ) { self.grid_divide_ui }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Grid Divide'
+    cmd_grid_divide_ui = cmd
+    
+    # Menus
+    m = TT.menu( 'Plugins' ).add_submenu( 'Plan Tools' )
+    m.add_item( cmd_generate_buildings )
+    m.add_item( cmd_merge_solid_buildings )
     m.add_separator
-    m.add_item('Make 2:1 Road Profile')         { self.make_road_profile }
-    m.add_item('Move to Z')                     { self.move_to_z }
+    m.add_item( cmd_fill_solid_holes )
+    m.add_item( cmd_select_non_solids )
     m.add_separator
-    m.add_item('Flatten Selection')             { self.flatten_selection }
-    m.add_item('Crop Selection to Boundary')    { self.crop_selection }
+    m.add_item( cmd_make_road_profile )
+    m.add_item( cmd_move_to_z )
     m.add_separator
-    m.add_item('Grid Divide')                   { self.grid_divide_ui }
+    m.add_item( cmd_flatten_selection )
+    m.add_item( cmd_crop_selection )
+    m.add_separator
+    m.add_item( cmd_grid_divide_ui )
+    
+    # Toolbar
+    toolbar = UI::Toolbar.new( PLUGIN_NAME )
+    toolbar.add_item( cmd_generate_buildings )
+    toolbar.add_item( cmd_merge_solid_buildings )
+    toolbar.add_separator
+    toolbar.add_item( cmd_fill_solid_holes )
+    toolbar.add_item( cmd_select_non_solids )
+    toolbar.add_separator
+    toolbar.add_item( cmd_make_road_profile )
+    toolbar.add_item( cmd_move_to_z )
+    toolbar.add_separator
+    toolbar.add_item( cmd_flatten_selection )
+    toolbar.add_item( cmd_crop_selection )
+    toolbar.add_separator
+    toolbar.add_item( cmd_grid_divide_ui )
+    if toolbar.get_last_state == TB_VISIBLE
+      toolbar.restore
+      UI.start_timer( 0.1, false ) { toolbar.restore } # SU bug 2902434
+    end
   end
   
   
@@ -68,7 +152,7 @@ module TT::Plugins::PlanTools
   end
   
   
-  ### MAIN SCRIPT ### ------------------------------------------------------
+  ### MAIN SCRIPT ### ----------------------------------------------------------
   
   #
   # ===== GENERATE BUILDINGS ===== #
@@ -858,7 +942,7 @@ module TT::Plugins::PlanTools
   end
   
   
-  ### DEBUG ### ------------------------------------------------------------  
+  ### DEBUG ### ----------------------------------------------------------------
   
   # TT::Plugins::PlanTools.reload
   def self.reload
@@ -867,6 +951,6 @@ module TT::Plugins::PlanTools
   
 end # module
 
-#-----------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 file_loaded( __FILE__ )
-#-----------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
