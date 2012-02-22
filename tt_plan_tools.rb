@@ -22,7 +22,7 @@ module TT::Plugins::PlanTools
   PLUGIN_VERSION  = TT::Version.new(2,0,0).freeze
   
   # Version information
-  RELEASE_DATE    = '21 Oct 10'.freeze
+  RELEASE_DATE    = '20 Feb 12'.freeze
   
   # Resource paths
   PATH_ROOT   = File.dirname( __FILE__ ).freeze
@@ -33,7 +33,7 @@ module TT::Plugins::PlanTools
   ### MODULE VARIABLES ### -----------------------------------------------------
   
   # Preference
-  @settings = TT::Settings.new(PLUGIN_ID)
+  @settings = TT::Settings.new( PLUGIN_ID )
   @settings.set_default( :gb_filter, '5003,5014,5081' ) # 5001,5003,5014,5041,5080,5081,5082
   @settings.set_default( :gb_low_pt, 'Lowest Point Above' )
   @settings.set_default( :gb_epsilon, 100.mm )
@@ -173,6 +173,10 @@ module TT::Plugins::PlanTools
   ### MAIN SCRIPT ### ----------------------------------------------------------
   
   
+  # @todo Filter target by layer.
+  #
+  # @todo Colour faces by elevation.
+  #
   # @since 2.0.0
   def self.extrude_up
     model = Sketchup.active_model
@@ -205,7 +209,6 @@ module TT::Plugins::PlanTools
     total_faces = source_faces.size
     
     # Raytrace vertices up.
-    # (!) Filter layer.
     time_start = Time.now
     Sketchup.status_text = 'Raytracing...'
     i = 0 # Index of current face.
@@ -303,6 +306,8 @@ module TT::Plugins::PlanTools
     Sketchup.active_model.select_tool( ContourTool.new )
   end
   
+  # @todo Filter target by layer.
+  #
   # @since 2.0.0
   class ContourTool
     
@@ -605,36 +610,8 @@ module TT::Plugins::PlanTools
     end
     
     # @since 2.0.0
-    #def onRButtonDown( flags, x, y, view )
-    #  #puts 'onRButtonDown'
-    #  true
-    #end
-    
-    # @since 2.0.0
-    #def getMenu( menu )
-    #  #puts 'getMenu'
-    #  false
-    #end
-    
-    # @since 2.0.0
-    #def onRButtonDown( flags, x, y, view )
-    #  puts 'onRButtonDown'
-    #  nil
-    #end
-    
-    # @since 2.0.0
-    #def onUserText( text, view )
-    #  puts "onUserText: #{text.inspect}"
-    #end
-    
-    # @since 2.0.0
-    def onReturn( view )
-      puts "onReturn"
-    end
-    
-    # @since 2.0.0
     def onCancel( reason, view )
-      puts "onCancel #{reason}"
+      #puts "onCancel #{reason}"
       
       # Cancel drawing of new segment.
       if @start_point || @mouse_point
@@ -657,23 +634,23 @@ module TT::Plugins::PlanTools
       default_status()
     end
     
+    # @todo Allow user to set elevation step amount.
+    #
     # @since 2.0.0
     def onKeyUp( key, repeat, flags, view )
-      puts "onKeyUp: #{key} - (#{flags})"
+      #puts "onKeyUp: #{key} - (#{flags})"
       case key
       when 107: # Numpad +
-        puts '> Elevate Up'
         change_elevation( 500.mm )
         view.invalidate
       when 109: # Numpad -
-        puts '> Elevate Down'
         change_elevation( -500.mm )
         view.invalidate
-      when 13: # Return (flag: numpad 49436, normal 49180)
-        puts '> Return'
+      #when 13: # Return (flag: numpad 49436, normal 49180)
+        #puts '> Return'
         # Triggers after onReturn
-      when 27: # ESC
-        puts '> ESC'
+      #when 27: # ESC
+        #puts '> ESC'
         # Triggers before onCancel( 0 )
       end
       default_status()
@@ -688,7 +665,7 @@ module TT::Plugins::PlanTools
         }
         view.line_stipple = ''
         view.line_width = 5
-        view.drawing_color = [255,0,0]
+        view.drawing_color = [255,128,0]
         view.draw( GL_LINES, segment )
         
         if @raytrace_pts
@@ -700,7 +677,7 @@ module TT::Plugins::PlanTools
           pt1, pt2, pt3, pt4 = @raytrace_pts
           view.line_stipple = ''
           view.line_width = 5
-          view.drawing_color = [255,0,0,64]
+          view.drawing_color = [255,128,0,64]
           view.draw( GL_LINES, [pt1,pt3] )
         end
       end
@@ -719,18 +696,18 @@ module TT::Plugins::PlanTools
       unless @connects.empty?
         view.line_stipple = ''
         view.line_width = 2
-        view.drawing_color = 'purple'
+        view.drawing_color = [128,0,255]
         for segment in @connects
           view.draw( GL_LINE_STRIP, segment )
-          view.draw_points( segment, 6, 1, 'purple' )
+          view.draw_points( segment, 6, 1, [128,0,255] )
         end
       end
       
       # New segment being drawn.
       if @start_point && @mouse_point
         view.line_stipple = ''
-        view.line_width = 4
-        view.drawing_color = 'pink'
+        view.line_width = 2
+        view.drawing_color = [0,92,255]
         view.draw( GL_LINES, [@start_point, @mouse_point] )
       end
       
@@ -754,7 +731,7 @@ module TT::Plugins::PlanTools
       # User modifies a segment.
       if @inject_mouse
         view.line_width = 2
-        view.draw_points( @inject_mouse, 10, 4, 'purple' )
+        view.draw_points( @inject_mouse, 10, 4, [128,0,255] )
       end
       
       # User draw new segment, snapping to existing geometry.
@@ -768,6 +745,8 @@ module TT::Plugins::PlanTools
       status( 'Click + drag end points to connect. Click edges to set Z elevation. Doubleclick face to commit segments.' )
     end
     
+    # @param [String] text
+    #
     # @since 2.0.0
     def status( text )
       Sketchup.status_text = text
@@ -783,6 +762,8 @@ module TT::Plugins::PlanTools
       pt.z
     end
     
+    # @param [Length] step
+    #
     # @since 2.0.0
     def change_elevation( step )
       return nil unless @edge
@@ -791,7 +772,9 @@ module TT::Plugins::PlanTools
       find_curves_on_elevation( @z, entities, @transformation )
     end
     
+    # @param [Sketchup::View] view
     # @param [Sketchup::Edge] edge
+    # @param [Geom::Transformation] transformation
     #
     # @return [Array<edge,transformation,z>]
     # @since 2.0.0
@@ -833,6 +816,9 @@ module TT::Plugins::PlanTools
       [ picked_edge, tr, z ]
     end
     
+    # @param [Sketchup::PickHelper] ph
+    # @param [Sketchup::Entity] entity
+    #
     # @since 2.0.0
     def get_pickhelper_transformation( ph, entity )
       for i in ( 0...ph.count )
@@ -843,6 +829,10 @@ module TT::Plugins::PlanTools
       Geom::Transformation.new # (?) nil
     end
     
+    # @param [Length] z
+    # @param [Sketchup::Entities] entities
+    # @param [Geom::Transformation] transformation
+    #
     # @since 2.0.0
     def find_curves_on_elevation( z, entities, transformation )
       @segments = []
@@ -871,6 +861,8 @@ module TT::Plugins::PlanTools
       nil
     end
     
+    # @param [Sketchup::View] view
+    #
     # @since 2.0.0
     def connect_contours( view )
       view.model.start_operation( 'Connect Contours', true )
