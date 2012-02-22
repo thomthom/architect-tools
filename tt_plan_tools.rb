@@ -17,8 +17,8 @@ module TT::Plugins::PlanTools
   ### CONSTANTS ### ------------------------------------------------------------
   
   # Plugin information
-  PLUGIN_ID       = 'TT_Plan'.freeze
-  PLUGIN_NAME     = 'Plan Tools'.freeze
+  PLUGIN_ID       = 'TT_PlanTools'.freeze
+  PLUGIN_NAME     = 'Plan Tools²'.freeze
   PLUGIN_VERSION  = TT::Version.new(2,0,0).freeze
   
   # Version information
@@ -82,6 +82,18 @@ module TT::Plugins::PlanTools
     cmd.tooltip = 'Move to Z'
     cmd_move_to_z = cmd
     
+    cmd = UI::Command.new( 'Contour Tool' ) { self.contour_tool }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Contour Tool'
+    cmd_contour_tool = cmd
+        
+    cmd = UI::Command.new( 'Extrude Up' ) { self.extrude_up }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Extrude Up'
+    cmd_extrude_up = cmd
+    
     cmd = UI::Command.new( 'Flatten Selection' ) { self.flatten_selection }
     cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
     cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
@@ -111,6 +123,9 @@ module TT::Plugins::PlanTools
     m.add_item( cmd_make_road_profile )
     m.add_item( cmd_move_to_z )
     m.add_separator
+    m.add_item( cmd_contour_tool )
+    m.add_item( cmd_extrude_up )
+    m.add_separator
     m.add_item( cmd_flatten_selection )
     m.add_item( cmd_crop_selection )
     m.add_separator
@@ -126,6 +141,9 @@ module TT::Plugins::PlanTools
     toolbar.add_separator
     toolbar.add_item( cmd_make_road_profile )
     toolbar.add_item( cmd_move_to_z )
+    toolbar.add_separator
+    toolbar.add_item( cmd_contour_tool )
+    toolbar.add_item( cmd_extrude_up )
     toolbar.add_separator
     toolbar.add_item( cmd_flatten_selection )
     toolbar.add_item( cmd_crop_selection )
@@ -153,6 +171,721 @@ module TT::Plugins::PlanTools
   
   
   ### MAIN SCRIPT ### ----------------------------------------------------------
+  
+  
+  # @since 2.0.0
+  def self.extrude_up
+    model = Sketchup.active_model
+    selection = model.selection
+    
+    # Verify Selection.
+    if selection.empty?
+      return UI.messagebox( 'Select a group or component with faces to extrude.' )
+    elsif selection.length == 1
+      entity = selection[0]
+      if TT::Instance.is?( entity )
+        definition = TT::Instance.definition( entity )
+        entities = definition.entities
+        transformation = entity.transformation
+      else
+        return UI.messagebox( 'Select a group or component with faces to extrude.' )
+      end
+    end
+    
+    # Key: Z Elevation
+    # Value: Array Faces
+    faces = {}
+    
+    # Key: Sketchup::Vertex
+    # Value: Geom::Point3d (Global position)
+    rays = {}
+    
+    # Collect faces to extrude.
+    source_faces = entities.select { |e| e.is_a?( Sketchup::Face ) }
+    total_faces = source_faces.size
+    
+    # Raytrace vertices up.
+    # (!) Filter layer.
+    time_start = Time.now
+    Sketchup.status_text = 'Raytracing...'
+    i = 0 # Index of current face.
+    for face in source_faces
+      i += 1
+      next unless face.valid?
+      
+      j = 0 # Index of current vertex.
+      vertex_count = face.vertices.size
+      
+      # Find the minimum raytraced height for all vertices in face. This is the
+      # height which the face will be extruded to.
+      elevation = nil
+      for vertex in face.vertices
+        # Output progress info to UI.
+        # (!) Use TT::Progressbar - avoid too many updates.
+        j += 1
+        Sketchup.status_text = "Raytracing... ( Face #{i} of #{total_faces} - Vertex #{j} of #{vertex_count} )"
+        TT::SketchUp.refresh
+        
+        # Raytrace vertices - but cache the result so it only is raytraced
+        # one time per vertex.
+        unless pt_target = rays[ vertex ]
+          pt_source = vertex.position.transform!( transformation )
+          ray = [ pt_source, Z_AXIS ]
+          result = model.raytest( ray, true ) # SU8 M1
+          if result.nil?
+            # Ensure result of non-hit trace is cached - store a ground level
+            # point - which will be ignored when retreived.
+            rays[ vertex ] = ORIGIN
+            next
+          end
+          pt_target, path = result
+          rays[ vertex ] = pt_target
+        end
+        
+        # Ignore elevation on ground.
+        # (?) Or maybe not - some elevations, at water edge should be at zero.
+        #     Look into changing this when layer filter is implemented.
+        z = pt_target.z
+        if elevation.nil? || z < elevation
+          elevation = z if z > 0.0
+        end
+      end
+      # Store the face with in the stack for the appropriate elevation.
+      # If no elevation was found then the face will be ignored.
+      next unless elevation && elevation > 0.0
+      faces[ elevation ] ||= []
+      faces[ elevation ] << face
+    end
+    
+    # Sort by height - highest first. This is because the highest need to be
+    # extruded first in order to ensure an extrusion doesn't stop to short
+    # because it's being limited by a short neighbouring extrusion.
+    sorted_faces = faces.sort { |a,b| b[0] <=> a[0] }
+    
+    # Extrude!
+    time_start_extrude = Time.now
+    i = 0 # Index of current face.
+    Sketchup.status_text = 'Extruding...'
+    model.start_operation( 'Extrude Up', true )
+    for elevation, entities in sorted_faces
+      next if elevation == 0.0
+      for face in entities
+        i += 1
+        next unless face.valid?
+        
+        # Output progress info to UI.
+        Sketchup.status_text = "Extruding... ( Face #{i} of #{total_faces} )"
+        TT::SketchUp.refresh
+        
+        # Extrude the face to calcualted elevation. Ensure normal is facing the
+        # correct direction - Z_AXIS.
+        if face.normal.samedirection?( Z_AXIS.reverse )
+          face.reverse!
+        end
+        face.pushpull( elevation )
+      end
+    end
+    model.commit_operation
+    Sketchup.status_text = 'Done!'
+    
+    # Performance stats.
+    raytraced_time  = TT::format_time( time_start_extrude - time_start )
+    extrude_time    = TT::format_time( Time.now - time_start_extrude )
+    total_time      = TT::format_time( Time.now - time_start )
+    puts "\n=== Extrude Up ==="
+    puts "> Raytracing: #{raytraced_time}"
+    puts "> Extruding: #{extrude_time}"
+    puts "Total: #{total_time}\n\n"
+  end
+  
+  # @since 2.0.0
+  def self.contour_tool
+    Sketchup.active_model.select_tool( ContourTool.new )
+  end
+  
+  # @since 2.0.0
+  class ContourTool
+    
+    # @since 2.0.0
+    def initialize
+      # Picked entities.
+      @edge = nil
+      @z = nil # Local
+      @transformation = nil
+      
+      # Mouse interaction.
+      @mouse_edge = nil
+      @mouse_z = nil
+      @mouse_transformation = nil
+      @raytrace_pts = nil
+      
+      # Segments from picked Z level and projected segments.
+      @segments = nil
+      @segments_2d = nil
+      
+      # Points of user interaction with drawn segments.
+      @selected_point = nil
+      @start_point = nil
+      @mouse_point = nil
+      
+      # Array of segments the user has drawn.
+      @connects = []
+      
+      # Array of open ends from curves on picked Z level.
+      @end_points = []
+      
+      # Segment modification.
+      @inject_point = nil
+      
+      # Input point helper.
+      @ip = Sketchup::InputPoint.new
+    end
+    
+    # @since 2.0.0
+    def activate
+      default_status()
+    end
+    
+    # @since 2.0.0
+    def deactivate( view )
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def resume( view )
+      view.invalidate
+      default_status()
+    end
+    
+    # @since 2.0.0
+    def onMouseMove( flags, x, y, view )
+      left_button = ( flags & MK_LBUTTON ) == MK_LBUTTON
+      
+      @mouse_edge = nil
+      
+      ph = view.pick_helper
+      
+      # Mouse hovers over a uncommited segment. End points or new injected
+      # points will be highlighted.
+      @inject_mouse = nil
+      for i in ( 0...@connects.size )
+        segment = @connects[i]
+        result = ph.pick_segment( segment, x, y, 10 )
+        next unless result
+        index = result.abs
+        if result < 0
+          line = segment[ index - 1, 2 ]
+          ray = view.pickray( x, y )
+          pt1, pt2 = Geom.closest_points( line, ray )
+          @inject_mouse = pt1
+          view.tooltip = "Click + drag to insert point to segment"
+        else
+          @inject_mouse = segment[ index ]
+          view.tooltip = "Click + drag to modify point"
+        end
+        return view.invalidate
+      end unless left_button
+      
+      # User is modifying a segment. Moves a new or existing point.
+      if @inject_point
+        plane = [ORIGIN,Z_AXIS]
+        ray = view.pickray( x, y )
+        pt = Geom.intersect_line_plane( ray, plane )
+        @inject_point.set!( pt ) if pt
+        @inject_mouse = @inject_point.clone
+        return view.invalidate
+      end
+      
+      # Check if mouse hovers over end point. Highlight it.
+      # If a new segment is being drawn, snap to the point.
+      ph.init( x, y, 20 )
+      for pt in @end_points
+        next unless ph.test_point( pt )
+        if @start_point
+          # Segment is being drawn, snap to point.
+          @mouse_point = pt
+          @end_point = pt
+          view.tooltip = "Release to connect to point"
+        else
+          # Highlight the point the mouse hovers over.
+          @selected_point = pt
+          view.tooltip = "Click + drag to draw contour from point"
+        end
+        return view.invalidate
+      end
+      
+      # New segment is being drawn, but the mouse is not close enough to any
+      # end point. Check if it can snap to an existing edge - otherwise ensure
+      # is is being drawn on ground plane.
+      if @start_point
+        @ip.pick( view, x, y )
+        if @ip.edge
+          # (!?) Ensure point is at ground level?
+          @mouse_point = @ip.position
+        else
+          plane = [ORIGIN,Z_AXIS]
+          ray = view.pickray( x, y )
+          @mouse_point = Geom.intersect_line_plane( ray, plane )
+          @ip.clear
+        end
+        @end_point = nil
+        @selected_point = nil
+        return view.invalidate
+      end
+      
+      # Check if mouse hovers over an edge - indicate to the user what edge and
+      # Z level is under the mouse.
+      ph.do_pick( x, y )
+      if @mouse_edge = ph.picked_edge
+        @mouse_transformation = get_pickhelper_transformation( ph, @mouse_edge )
+        z = @mouse_edge.vertices[0].position.z
+        if @mouse_edge.vertices.all? { |v| v.position.z == z }
+          @mouse_z = z
+        end
+        z = @mouse_edge.vertices[0].position.transform(@mouse_transformation).z
+        # Check if the pick will be raytraced
+        if result = raytrace_pick( view, @mouse_edge, @mouse_transformation )
+          edge, transformation, z = result
+          pt1, pt2 = edge.vertices.map { |v| v.position.transform( transformation ) }
+          pt3 = pt1.offset( Z_AXIS.reverse, z )
+          pt4 = pt2.offset( Z_AXIS.reverse, z )
+          @raytrace_pts = [ pt1,pt3, pt2,pt4 ]
+        else
+          @raytrace_pts = nil
+        end
+        view.tooltip = "Z Elevation: #{z}\nClick to set as current"
+      else
+        @mouse_edge = nil
+        @mouse_z = nil
+        @mouse_transformation = nil
+      end
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def onLButtonDown( flags, x, y, view )
+      ph = view.pick_helper
+      
+      # Check for interaction with new connecting segments.
+      # Clicking on a point will move it, clicking on a segment
+      # will insert a new point.
+      for i in ( 0...@connects.size )
+        # See if a segment was picked.
+        segment = @connects[i]
+        result = ph.pick_segment( segment, x, y, 10 )
+        next unless result
+        # Determine if a point or edge was clicked.
+        index = result.abs
+        if result < 0
+          # Edge was clicked, insert new point.
+          pt1, pt2 = segment[ index - 1, 2 ]
+          pt = Geom::linear_combination( 0.5, pt1, 0.5, pt2 )
+          @inject_point = pt
+          segment.insert( index, @inject_point )
+        else
+          # Point was clicked, move existing point.
+          @inject_point = segment[ index ]
+        end
+        
+        return view.invalidate
+      end
+      
+      # Check if an end point was clicked. This will initiate the drawing
+      # function. The user can then make a new virtual segment that can be
+      # edited until the user commit the change.
+      ph.init( x, y, 20 )
+      for pt in @end_points
+        next unless ph.test_point( pt )
+        @start_point = pt
+        return view.invalidate
+      end
+      
+      # Check if the user has picked an edge - in which case a new Z height is
+      # chosen. All edges in that entities-context will then be projected down
+      # to ground level.
+      #
+      # If the edge is at ground level - Z = 0 - a ray will be traced
+      # to find the overhead geometry. This is to allow the user to pick a
+      # Z height from the projected ground plane.
+      if @mouse_edge && @mouse_edge.vertices.all? { |v| v.position.z == 0 }
+        if result = raytrace_pick( view, @mouse_edge, @mouse_transformation )
+          @edge, @transformation, @z = result
+          local_z = @edge.start.position.z
+          find_curves_on_elevation( local_z, @edge.parent.entities, @transformation )
+        end
+        return view.invalidate
+      elsif @edge = @mouse_edge
+        # Find all edges on Z height and project down to ground.
+        @transformation = @mouse_transformation
+        @z = @mouse_z
+        find_curves_on_elevation( @z, @edge.parent.entities, @transformation )
+        return view.invalidate
+      end
+      
+      # Select faces picked in the current context.
+      ph.do_pick( x, y )
+      #face = ph.best_picked
+      if face = ph.best_picked and face.is_a?( Sketchup::Face )
+        entities = face.parent.entities
+        if view.model.active_entities == entities
+          view.model.selection.clear
+          view.model.selection.add( face )
+        end
+      end
+      
+      view.invalidate
+    end
+    
+    
+    # @since 2.0.0
+    def onLButtonUp( flags, x, y, view )
+      # User create a new segment.
+      if @start_point && @mouse_point
+        @connects << [ @start_point, @mouse_point ]
+      end
+      
+      # Reset states.
+      @start_point = nil
+      @end_point = nil
+      @mouse_point = nil
+      @selected_point = nil
+      @ip.clear
+      @inject_point = nil
+      @inject_mouse = nil
+      
+      view.invalidate
+      default_status()
+    end
+
+    # @since 2.0.0
+    def onLButtonDoubleClick( flags, x, y, view )
+      puts 'onLButtonDoubleClick'
+      
+      # Double click triggers various actions based on what is clicked.
+      ph = view.pick_helper
+      ph.do_pick( x, y )
+
+      if picked = ph.picked_edge
+        puts '> Auto-Merge'
+        # Double clicking edges will attempt to trigger SketchUp's auto-merge
+        # feature. Useful for closed edge loops which hasn't merged with the
+        # face it lies on.
+        transformation = get_pickhelper_transformation( ph, picked )
+        #pts = picked.vertices.map { |v| v.position.transform( transformation.inverse ) }
+        #if pts.all? { |pt| pt.z == 0 }
+          view.model.start_operation( 'Trigger Auto-Merge', true )
+          entities = picked.parent.entities
+          points = picked.vertices.map { |v| v.position }
+          g = entities.add_group
+          e = g.entities.add_line( points )
+          g.explode
+          @mouse_edge = nil
+          @edge = nil
+          @segments = nil
+          view.model.commit_operation
+        #end
+      elsif picked = ph.picked_face
+        puts '> Connect Contours'
+        # Double clicking a face will commit the drawn segments. The new
+        # geometry will be drawn in the same context as the clicked face.
+        transformation = get_pickhelper_transformation( ph, picked )
+        entities = picked.parent.entities
+        view.model.start_operation( 'Connect Contours', true )
+        for segment in @connects
+          local_segment = segment.map { |pt|
+            pt.transform( transformation.inverse )
+          }
+          entities.add_curve( local_segment )
+        end
+        view.model.commit_operation
+        puts "> #{@connects.size} connected"
+        @connects.clear
+      end
+      true
+    end
+    
+    # @since 2.0.0
+    #def onRButtonDown( flags, x, y, view )
+    #  #puts 'onRButtonDown'
+    #  true
+    #end
+    
+    # @since 2.0.0
+    #def getMenu( menu )
+    #  #puts 'getMenu'
+    #  false
+    #end
+    
+    # @since 2.0.0
+    #def onRButtonDown( flags, x, y, view )
+    #  puts 'onRButtonDown'
+    #  nil
+    #end
+    
+    # @since 2.0.0
+    #def onUserText( text, view )
+    #  puts "onUserText: #{text.inspect}"
+    #end
+    
+    # @since 2.0.0
+    def onReturn( view )
+      puts "onReturn"
+    end
+    
+    # @since 2.0.0
+    def onCancel( reason, view )
+      puts "onCancel #{reason}"
+      
+      # Cancel drawing of new segment.
+      if @start_point || @mouse_point
+        @start_point = nil
+        @mouse_point = nil
+        return view.invalidate
+      end
+      
+      # Cancel editing of new segment
+      #if @inject_mouse
+      #  segment = @connects.find { |path| path.include?( @inject_mouse ) }
+      #  segment.delete( @inject_mouse )
+      #  @inject_mouse = nil
+      #  return view.invalidate
+      #end
+      
+      # Clear drawn segments
+      @connects.clear
+      view.invalidate
+      default_status()
+    end
+    
+    # @since 2.0.0
+    def onKeyUp( key, repeat, flags, view )
+      puts "onKeyUp: #{key} - (#{flags})"
+      case key
+      when 107: # Numpad +
+        puts '> Elevate Up'
+        change_elevation( 500.mm )
+        view.invalidate
+      when 109: # Numpad -
+        puts '> Elevate Down'
+        change_elevation( -500.mm )
+        view.invalidate
+      when 13: # Return (flag: numpad 49436, normal 49180)
+        puts '> Return'
+        # Triggers after onReturn
+      when 27: # ESC
+        puts '> ESC'
+        # Triggers before onCancel( 0 )
+      end
+      default_status()
+    end
+    
+    # @since 2.0.0
+    def draw( view )
+      # User hovers over edge - highlight this.
+      if @mouse_edge && @mouse_z && @mouse_transformation
+        segment = @mouse_edge.vertices.map { |v|
+          v.position.transform( @mouse_transformation )
+        }
+        view.line_stipple = ''
+        view.line_width = 5
+        view.drawing_color = [255,0,0]
+        view.draw( GL_LINES, segment )
+        
+        if @raytrace_pts
+          view.line_stipple = '-'
+          view.line_width = 1
+          view.drawing_color = [92,92,92]
+          view.draw( GL_LINES, @raytrace_pts )
+          
+          pt1, pt2, pt3, pt4 = @raytrace_pts
+          view.line_stipple = ''
+          view.line_width = 5
+          view.drawing_color = [255,0,0,64]
+          view.draw( GL_LINES, [pt1,pt3] )
+        end
+      end
+      
+      #if @edge && @z && @transformation
+      #  segment = @edge.vertices.map { |v|
+      #    v.position.transform( @transformation )
+      #  }
+      #  view.line_stipple = ''
+      #  view.line_width = 5
+      #  view.drawing_color = [0,128,0]
+      #  view.draw( GL_LINES, segment )
+      #end      
+      
+      # All the new un-commited segments the user has drawn.
+      unless @connects.empty?
+        view.line_stipple = ''
+        view.line_width = 2
+        view.drawing_color = 'purple'
+        for segment in @connects
+          view.draw( GL_LINE_STRIP, segment )
+          view.draw_points( segment, 6, 1, 'purple' )
+        end
+      end
+      
+      # New segment being drawn.
+      if @start_point && @mouse_point
+        view.line_stipple = ''
+        view.line_width = 4
+        view.drawing_color = 'pink'
+        view.draw( GL_LINES, [@start_point, @mouse_point] )
+      end
+      
+      # All the edges from the picked Z level.
+      if @segments
+        view.line_stipple = ''
+        view.line_width = 4
+        view.drawing_color = [0,128,0,128]
+        view.draw( GL_LINES, @segments )
+        
+        view.drawing_color = [255,128,0]
+        view.draw( GL_LINES, @segments_2d )
+        
+        view.line_width = 2
+        view.draw_points( @end_points, 10, 1, [255,0,0] )
+        view.draw_points( @start_point, 10, 2, [255,0,0] ) if @start_point
+        view.draw_points( @end_point, 10, 2, [255,0,0] ) if @end_point
+        view.draw_points( @selected_point, 10, 2, [255,0,0] ) if @selected_point
+      end
+      
+      # User modifies a segment.
+      if @inject_mouse
+        view.line_width = 2
+        view.draw_points( @inject_mouse, 10, 4, 'purple' )
+      end
+      
+      # User draw new segment, snapping to existing geometry.
+      if @ip.display?
+       @ip.draw( view  )
+      end
+    end
+    
+    # @since 2.0.0
+    def default_status
+      status( 'Click + drag end points to connect. Click edges to set Z elevation. Doubleclick face to commit segments.' )
+    end
+    
+    # @since 2.0.0
+    def status( text )
+      Sketchup.status_text = text
+      Sketchup.vcb_label = 'Z Elevation'
+      Sketchup.vcb_value = global_elevation()
+    end
+    
+    # @since 2.0.0
+    def global_elevation
+      return nil unless @z
+      pt = Geom::Point3d.new( 0, 0, @z )
+      pt.transform( @transformation )
+      pt.z
+    end
+    
+    # @since 2.0.0
+    def change_elevation( step )
+      return nil unless @edge
+      entities = @edge.parent.entities
+      @z += step
+      find_curves_on_elevation( @z, entities, @transformation )
+    end
+    
+    # @param [Sketchup::Edge] edge
+    #
+    # @return [Array<edge,transformation,z>]
+    # @since 2.0.0
+    def raytrace_pick( view, edge, transformation )
+      # Source points.
+      pt1 = edge.start.position.transform( transformation )
+      pt2 = edge.end.position.transform( transformation )
+      # Raytrace up to find elevation.
+      ray = [ pt1, Z_AXIS ]
+      result = view.model.raytest( ray, false ) # (!) SU8 M1
+      return nil unless result
+      # Ensure entity found is a level edge.
+      hit_pt, path = result
+      e = path.pop
+      return nil unless e.is_a?( Sketchup::Edge ) && e.start.position.z == e.end.position.z
+      # Calculate transformation
+      tr = Geom::Transformation.new
+      until path.empty?
+        i = path.pop
+        tr = tr * i.transformation
+      end
+      # Find the exact edge.
+      v1 = e.vertices.find { |v|
+        pt = v.position.transform( tr )
+        pt.z = 0
+        #pt.distance( pt1 ) < 0.001
+        pt == pt1
+      }
+      return nil unless v1
+      picked_edge = v1.edges.find { |neighbour_edge|
+        pt = neighbour_edge.other_vertex( v1 ).position.transform( tr )
+        pt.z = 0
+        #pt.distance( pt2 ) < 0.001
+        pt == pt2
+      }
+      return nil unless picked_edge
+      # Find global Z elevation.
+      z = picked_edge.start.position.transform( tr ).z
+      [ picked_edge, tr, z ]
+    end
+    
+    # @since 2.0.0
+    def get_pickhelper_transformation( ph, entity )
+      for i in ( 0...ph.count )
+        path = ph.path_at( i )
+        next unless path.include?( entity )
+        return ph.transformation_at( i )
+      end
+      Geom::Transformation.new # (?) nil
+    end
+    
+    # @since 2.0.0
+    def find_curves_on_elevation( z, entities, transformation )
+      @segments = []
+      @segments_2d = []
+      @end_points = []
+      
+      for e in entities
+        next unless e.is_a?( Sketchup::Edge )
+        next unless e.vertices.all? { |v| v.position.z == z }
+        
+        pt1 = e.start.position.transform( transformation )
+        pt2 = e.end.position.transform( transformation )
+        @segments << pt1
+        @segments << pt2
+        
+        pt1_2d = pt1.clone
+        pt2_2d = pt2.clone
+        pt1_2d.z = 0
+        pt2_2d.z = 0
+        @segments_2d << pt1_2d
+        @segments_2d << pt2_2d
+        
+        @end_points << pt1_2d if e.start.edges.size == 1
+        @end_points << pt2_2d if e.end.edges.size == 1
+      end
+      nil
+    end
+    
+    # @since 2.0.0
+    def connect_contours( view )
+      view.model.start_operation( 'Connect Contours', true )
+      for segment in @connects
+        view.model.active_entities.add_curve( segment )
+      end
+      view.model.commit_operation
+      @connects.clear
+    end
+    
+  end # class
+  
+  
+  ##############################################################################
+  
   
   #
   # ===== GENERATE BUILDINGS ===== #
