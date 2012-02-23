@@ -94,6 +94,12 @@ module TT::Plugins::PlanTools
     cmd.tooltip = 'Extrude Up'
     cmd_extrude_up = cmd
     
+    cmd = UI::Command.new( 'Project Down Tool' ) { self.project_tool }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Project Down Tool'
+    cmd_project_tool = cmd
+    
     cmd = UI::Command.new( 'Flatten Selection' ) { self.flatten_selection }
     cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
     cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
@@ -125,6 +131,7 @@ module TT::Plugins::PlanTools
     m.add_separator
     m.add_item( cmd_contour_tool )
     m.add_item( cmd_extrude_up )
+    m.add_item( cmd_project_tool )
     m.add_separator
     m.add_item( cmd_flatten_selection )
     m.add_item( cmd_crop_selection )
@@ -144,6 +151,7 @@ module TT::Plugins::PlanTools
     toolbar.add_separator
     toolbar.add_item( cmd_contour_tool )
     toolbar.add_item( cmd_extrude_up )
+    toolbar.add_item( cmd_project_tool )
     toolbar.add_separator
     toolbar.add_item( cmd_flatten_selection )
     toolbar.add_item( cmd_crop_selection )
@@ -171,6 +179,260 @@ module TT::Plugins::PlanTools
   
   
   ### MAIN SCRIPT ### ----------------------------------------------------------
+  
+  # @since 2.0.0
+  def self.project_tool
+    Sketchup.active_model.select_tool( ProjectDownTool.new )
+  end
+  
+  # @since 2.0.0
+  class ProjectDownTool
+    
+    # @since 2.0.0
+    def initialize
+      @entity = nil
+      @transformation = nil
+      
+      @segments = []
+      @projections = []
+      @hit_points = []
+      
+      @adjust_points = []
+    end
+    
+    # @since 2.0.0
+    def deactivate( view )
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def resume( view )
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def onMouseMove( flags, x, y, view )
+      ph = view.pick_helper
+      ph.do_pick( x, y )
+      
+      @entity = ph.picked_edge || ph.picked_face
+      @transformation = get_pickhelper_transformation( ph, @entity )
+      
+      @segments.clear
+      @projections.clear
+      @hit_points.clear
+      @adjust_points.clear
+      @target_face = nil
+      status = ''
+      for edge in get_edges( @entity )
+        pt1, pt2 = edge.vertices.map { |v| v.position.transform!( @transformation ) }
+        ray1 = [ pt1, Z_AXIS.reverse ]
+        ray2 = [ pt2, Z_AXIS.reverse ]
+        #result1 = view.model.raytest( ray1 ) # Until face is found?
+        #result2 = view.model.raytest( ray2 )
+        result1 = ray_find_face( view.model, ray1 )
+        result2 = ray_find_face( view.model, ray2 )
+        target1, path1 = result1
+        target2, path2 = result2
+        if target1
+          @projections.concat( [ pt1, target1 ] )
+          @hit_points << target1
+          status += "Target1: #{path1.last}"
+        end
+        if target2
+          @projections.concat( [ pt2, target2 ] )
+          @hit_points << target2
+          status += " - Target2: #{path2.last}"
+        end
+        if target1 && target2
+          if path1.last == path2.last
+            # If the ray hit the same entity, then there is no problem.
+            @segments.concat( [ target1, target2 ] )
+            @target_face = path1.last
+            @target_transformation = ray_transformation( path1 )
+          else
+            # If the ray hit different entities, then a common face must be
+            # found.
+            
+            # Assuming the target is a face.
+            
+            # Use the target of the highest hit and trace the other point back
+            # to the same plane.
+            if target1.z > target2.z
+              high = result1
+              low = result2
+            else
+              high = result2
+              low = result1
+            end
+            
+            high_pt, high_path = high
+            low_pt, low_path = low
+            
+            high_tr = ray_transformation( high_path )
+            low_tr = ray_transformation( low_path )
+            
+            global_high_pt = high_pt.transform( high_tr )
+            global_low_pt = low_pt.transform( low_tr )
+            
+            #if high_path.last.is_a?( Sketchup::Face )
+              line = [ global_low_pt, Z_AXIS ]
+              
+              face = high_path.last
+              vector = face.normal.transform!( high_tr )
+              pt = face.vertices[0].position.transform!( high_tr )
+              plane = [ pt, vector ]
+              
+              pt = Geom.intersect_line_plane( line, plane )
+              if pt
+                @adjust_points << pt
+                @target_face = face
+                @target_transformation = high_tr
+                @segments.concat( [ high_pt, pt ] )
+              end
+            #end
+          
+          end
+        end
+      end
+      Sketchup.status_text = status
+      
+      #view.model.selection.clear
+      #view.model.selection.add( @target_face ) if @target_face
+      
+      view.tooltip = @entity.typename if @entity
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def onLButtonUp( flags, x, y, view )
+      if @target_face && !@segments.empty?
+        entities = @target_face.parent.entities
+        tr = @target_transformation.inverse
+        entities.model.start_operation( 'Project Down', true )
+        #for segment in @segments
+        for i in ( 0...@segments.size-1 )
+          segment = @segments[i,2]
+          local_pts = segment.map { |pt| pt.transform( tr ) }
+          entities.add_line( local_pts )
+        end
+        entities.model.commit_operation
+      end
+      @segments.clear
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def draw( view )
+      if @entity
+        view.line_stipple = ''
+        view.line_width = 5
+        view.drawing_color = [255,128,0]
+        if @entity.is_a?( Sketchup::Edge )
+          pts = @entity.vertices.map { |v| v.position.transform!( @transformation ) }
+          view.draw( GL_LINES, pts )
+        elsif @entity.is_a?( Sketchup::Face )
+          for loop in @entity.loops
+            pts = loop.vertices.map { |v| v.position.transform!( @transformation ) }
+            view.draw( GL_LINE_LOOP, pts )
+          end
+        end
+      end
+      
+      if @target_face && @target_face.valid?
+        triangles = []
+        pm = @target_face.mesh
+        for i in ( 1..pm.count_polygons )
+          pts = pm.polygon_points_at( i )
+          pts.each { |pt| triangles << pt.transform!( @transformation ) }
+        end
+        view.drawing_color = [0,128,255,64]
+        view.draw( GL_TRIANGLES, triangles )
+        
+        #pts = @target_face.outer_loop.vertices.map { |v|
+        #  v.position.transform!( @transformation )
+        #}
+        #view.drawing_color = [0,128,255,64]
+        #view.draw( GL_POLYGON, pts )
+      end
+      
+      unless @projections.empty?
+        view.line_stipple = '_'
+        view.line_width = 1
+        view.drawing_color = [255,0,128]
+        view.draw( GL_LINES, @projections )
+      end
+      
+      unless @segments.empty?
+        view.line_stipple = ''
+        view.line_width = 2
+        view.drawing_color = [0,128,255]
+        view.draw( GL_LINES, @segments )
+      end
+      
+      unless @hit_points.empty?
+        view.line_stipple = ''
+        view.line_width = 2
+        view.draw_points( @hit_points, 6, 4, [255,0,0] )
+      end
+      
+      unless @adjust_points.empty?
+        view.line_stipple = ''
+        view.line_width = 2
+        view.draw_points( @adjust_points, 6, 4, [0,128,255] )
+      end
+    end
+    
+    # @since 2.0.0
+    def ray_transformation( path )
+      stack = path.dup
+      tr = Geom::Transformation.new
+      for i in ( 0...path.size-2 )
+        tr = tr * path[i].transformation
+      end unless path.empty?
+      tr
+    end
+    
+    # @since 2.0.0
+    def ray_find_face( model, ray )
+      result = model.raytest( ray )
+      return nil unless result
+      vector = ray[1]
+      pt, path = result
+      until path.last.is_a?( Sketchup::Face )
+        ray = [ pt, vector ]
+        result = model.raytest( ray )
+        return nil unless result
+        pt, path = result
+      end
+      result
+    end
+    
+    # @param [Sketchup::PickHelper] ph
+    # @param [Sketchup::Entity] entity
+    #
+    # @since 2.0.0
+    def get_pickhelper_transformation( ph, entity )
+      for i in ( 0...ph.count )
+        path = ph.path_at( i )
+        next unless path.include?( entity )
+        return ph.transformation_at( i )
+      end
+      Geom::Transformation.new # (?) nil
+    end
+    
+    # @since 2.0.0
+    def get_edges( entity )
+      edges = []
+      if entity.is_a?( Sketchup::Edge )
+        edges << entity
+      elsif entity.is_a?( Sketchup::Face )
+        edges == entity.edges
+      end
+      edges
+    end
+    
+  end # class ProjectDownTool
   
   
   # @todo Filter target by layer.
