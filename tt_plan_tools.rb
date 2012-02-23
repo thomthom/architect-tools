@@ -208,6 +208,10 @@ module TT::Plugins::PlanTools
     source_faces = entities.select { |e| e.is_a?( Sketchup::Face ) }
     total_faces = source_faces.size
     
+    # Correction for when a group or component is the current context.
+    model_transform = model.edit_transform.inverse
+    transform_to_global = transformation
+    
     # Raytrace vertices up.
     time_start = Time.now
     Sketchup.status_text = 'Raytracing...'
@@ -232,16 +236,29 @@ module TT::Plugins::PlanTools
         # Raytrace vertices - but cache the result so it only is raytraced
         # one time per vertex.
         unless pt_target = rays[ vertex ]
-          pt_source = vertex.position.transform!( transformation )
+          pt_source = vertex.position.transform!( transform_to_global )
+          #pt_source = vertex.position.transform!( transformation )
+          #pt_source.transform!( model_transform )
+          
+          # <debug>
+          #model.entities.add_cpoint( pt_source )
+          # </debug>
           ray = [ pt_source, Z_AXIS ]
           result = model.raytest( ray, true ) # SU8 M1
           if result.nil?
             # Ensure result of non-hit trace is cached - store a ground level
             # point - which will be ignored when retreived.
+            # <debug>
+            #model.entities.add_cline( pt_source, pt_source.offset( Z_AXIS, 200.m ) )
+            # </debug>
             rays[ vertex ] = ORIGIN
             next
           end
           pt_target, path = result
+          # <debug>
+          #model.entities.add_cline( pt_source, pt_target ) 
+          #model.entities.add_cpoint( pt_target )
+          # </debug>
           rays[ vertex ] = pt_target
         end
         
