@@ -100,6 +100,12 @@ module TT::Plugins::PlanTools
     cmd.tooltip = 'Project Down Tool'
     cmd_project_tool = cmd
     
+    cmd = UI::Command.new( 'Magnet Tool' ) { self.magnet_tool }
+    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.tooltip = 'Magnet Tool'
+    cmd_magnet_tool = cmd
+    
     cmd = UI::Command.new( 'Flatten Selection' ) { self.flatten_selection }
     cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
     cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
@@ -132,6 +138,7 @@ module TT::Plugins::PlanTools
     m.add_item( cmd_contour_tool )
     m.add_item( cmd_extrude_up )
     m.add_item( cmd_project_tool )
+    m.add_item( cmd_magnet_tool )
     m.add_separator
     m.add_item( cmd_flatten_selection )
     m.add_item( cmd_crop_selection )
@@ -152,6 +159,7 @@ module TT::Plugins::PlanTools
     toolbar.add_item( cmd_contour_tool )
     toolbar.add_item( cmd_extrude_up )
     toolbar.add_item( cmd_project_tool )
+    toolbar.add_item( cmd_magnet_tool )
     toolbar.add_separator
     toolbar.add_item( cmd_flatten_selection )
     toolbar.add_item( cmd_crop_selection )
@@ -179,6 +187,192 @@ module TT::Plugins::PlanTools
   
   
   ### MAIN SCRIPT ### ----------------------------------------------------------
+  
+  
+  # @since 2.0.0
+  def self.magnet_tool
+    Sketchup.active_model.select_tool( MagnetTool.new )
+  end
+  
+  # @since 2.0.0
+  class MagnetTool
+    
+    # @since 2.0.0
+    def initialize
+      @mouse_target = nil
+      @mouse_transformation = nil
+      
+      @mouse_projections = []
+      @mouse_hit_points = []
+      
+      @mouse_triangles = []
+      
+      @mouse_vertices = {}
+      
+      @projections = []
+      @hit_points = []
+      
+      @faces = []
+      @vertices = {}
+    end
+    
+    # @since 2.0.0
+    def deactivate( view )
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def resume( view )
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def onMouseMove( flags, x, y, view )
+      ph = view.pick_helper
+      ph.do_pick( x, y )
+      
+      face = ph.picked_face
+      tr = get_pickhelper_transformation( ph, face )
+      
+      @mouse_target = face
+      @mouse_transformation = tr
+      @mouse_projections.clear
+      @mouse_hit_points.clear
+      @mouse_triangles.clear
+      @mouse_vertices.clear
+      
+      if face && face.vertices.size < 100
+        offsets = {}
+        for vertex in face.vertices
+          pt = vertex.position.transform!( tr )
+          ray = [ pt, Z_AXIS ]
+          result = view.model.raytest( ray )
+          next unless result
+          hit_pt, path = result
+          @mouse_projections << pt
+          @mouse_projections << hit_pt
+          @mouse_hit_points << hit_pt
+          
+          vector = pt.vector_to( hit_pt )
+          if vector.valid?
+            @mouse_vertices[vertex] = [ vector, hit_pt ] # Vector, Global Point
+            offsets[vertex.position.to_a] = vector
+          end
+        end
+        pm = face.mesh
+        for i in ( 1..pm.count_polygons )
+          pts = pm.polygon_points_at( i )
+          pts.each { |pt|
+            vector = offsets[ pt.to_a ]
+            pt.offset!( vector )  if vector
+            pt.transform!( @mouse_transformation )
+            @mouse_triangles << pt
+          }
+        end
+      end
+      
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def onLButtonUp( flags, x, y, view )
+      unless @mouse_vertices.empty?
+        @vertices.merge!( @mouse_vertices )
+        @faces << @mouse_triangles.dup
+      end
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def onReturn( view )
+      if @vertices.empty?
+        UI.beep
+      else
+        # Sort vertices by Entities
+        contexts = {}
+        for vertex, data in @vertices
+          vector, global_position = data
+          entities = vertex.parent.entities
+          contexts[ entities ] ||= [ [], [] ]
+          contexts[ entities ][0] << vertex
+          contexts[ entities ][1] << vector
+        end
+        # Transform vertices and smooth new autofolded edges.
+        view.model.start_operation( 'Magnet', true )
+        for entities, data in contexts
+          vertices, vectors = data
+          original_entities = entities.to_a
+          entities.transform_by_vectors( vertices, vectors )
+          new_entities = entities.to_a - original_entities
+          for e in new_entities
+            next unless e.is_a?( Sketchup::Edge )
+            e.soft = true
+            e.smooth = true
+          end
+        end
+        view.model.commit_operation
+        @vertices.clear
+        @faces.clear
+        view.invalidate
+      end
+    end
+    
+    # @since 2.0.0
+    def draw( view )
+      
+      unless @mouse_triangles.empty?
+        view.drawing_color = [255,128,0,64]
+        view.draw( GL_TRIANGLES, @mouse_triangles )
+      end
+      
+      if @mouse_target && @mouse_target.valid?
+        triangles = []
+        pm = @mouse_target.mesh
+        for i in ( 1..pm.count_polygons )
+          pts = pm.polygon_points_at( i )
+          pts.each { |pt| triangles << pt.transform!( @mouse_transformation ) }
+        end
+        view.drawing_color = [128,255,0,64]
+        view.draw( GL_TRIANGLES, triangles )
+      end
+      
+      unless @mouse_projections.empty?
+        view.line_stipple = '_'
+        view.line_width = 1
+        view.drawing_color = [0,128,255]
+        view.draw( GL_LINES, @mouse_projections )
+      end
+      
+      unless @mouse_hit_points.empty?
+        view.line_stipple = ''
+        view.line_width = 2
+        view.draw_points( @mouse_hit_points, 6, 4, [0,128,255] )
+      end
+      
+      unless @faces.empty?
+        view.drawing_color = [0,128,255,64]
+        for triangles in @faces
+          view.draw( GL_TRIANGLES, triangles )
+        end
+      end
+
+    end
+    
+    # @param [Sketchup::PickHelper] ph
+    # @param [Sketchup::Entity] entity
+    #
+    # @since 2.0.0
+    def get_pickhelper_transformation( ph, entity )
+      for i in ( 0...ph.count )
+        path = ph.path_at( i )
+        next unless path.include?( entity )
+        return ph.transformation_at( i )
+      end
+      Geom::Transformation.new # (?) nil
+    end
+  
+  end # class MagnetTool
+    
   
   # @since 2.0.0
   def self.project_tool
