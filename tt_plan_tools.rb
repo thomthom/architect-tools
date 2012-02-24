@@ -508,7 +508,9 @@ module TT::Plugins::PlanTools
         for i in ( 0...@segments.size-1 )
           segment = @segments[i,2]
           local_pts = segment.map { |pt| pt.transform( tr ) }
-          entities.add_line( local_pts )
+          g = entities.add_group
+          g.entities.add_line( local_pts )
+          g.explode # Triggering SketchUp's auto-marge feature.
         end
         entities.model.commit_operation
       end
