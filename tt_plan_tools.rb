@@ -45,8 +45,8 @@ module TT::Plugins::PlanTools
   unless file_loaded?( __FILE__ )
     # Commands
     cmd = UI::Command.new( 'Generate Buildings' ) { self.generate_buildings }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'GenerateBuildings_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'GenerateBuildings_24.png' )
     cmd.status_bar_text = 'Generate Buildings from CAD plan.'
     cmd.tooltip = 'Generate Buildings'
     cmd_generate_buildings = cmd
@@ -70,8 +70,8 @@ module TT::Plugins::PlanTools
     cmd_select_non_solids = cmd
     
     cmd = UI::Command.new( 'Make 2:1 Road Profile' ) { self.make_road_profile }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'RoadProfile_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'RoadProfile_24.png' )
     cmd.tooltip = 'Make 2:1 Road Profile'
     cmd_make_road_profile = cmd
     
@@ -83,14 +83,14 @@ module TT::Plugins::PlanTools
     cmd_move_to_z = cmd
     
     cmd = UI::Command.new( 'Contour Tool' ) { self.contour_tool }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'ContourTool_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'ContourTool_24.png' )
     cmd.tooltip = 'Contour Tool'
     cmd_contour_tool = cmd
         
     cmd = UI::Command.new( 'Extrude Up' ) { self.extrude_up }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'ExtrudeUp_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'ExtrudeUp_24.png' )
     cmd.tooltip = 'Extrude Up'
     cmd_extrude_up = cmd
     
@@ -101,14 +101,14 @@ module TT::Plugins::PlanTools
     cmd_project_tool = cmd
     
     cmd = UI::Command.new( 'Magnet Tool' ) { self.magnet_tool }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'MagnetTool_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'MagnetTool_24.png' )
     cmd.tooltip = 'Magnet Tool'
     cmd_magnet_tool = cmd
     
     cmd = UI::Command.new( 'Flatten Selection' ) { self.flatten_selection }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'Flatten_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'Flatten_24.png' )
     cmd.tooltip = 'Flatten Selection'
     cmd_flatten_selection = cmd
     
@@ -118,14 +118,14 @@ module TT::Plugins::PlanTools
     cmd.tooltip = 'Crop Selection to Boundary'
     cmd_crop_selection = cmd
     
-    cmd = UI::Command.new( 'Grid Divide' ) { self.grid_divide_ui }
+    cmd = UI::Command.new( 'Edge Grid Divide' ) { self.grid_divide_ui }
     cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
     cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
-    cmd.tooltip = 'Grid Divide'
+    cmd.tooltip = 'Edge Grid Divide'
     cmd_grid_divide_ui = cmd
     
     # Menus
-    m = TT.menu( 'Plugins' ).add_submenu( 'Plan Tools' )
+    m = TT.menu( 'Plugins' ).add_submenu( PLUGIN_NAME )
     m.add_item( cmd_generate_buildings )
     m.add_item( cmd_merge_solid_buildings )
     m.add_separator
@@ -444,6 +444,8 @@ module TT::Plugins::PlanTools
             @segments.concat( [ target1, target2 ] )
             @target_face = path1.last
             @target_transformation = ray_transformation( path1 )
+            
+            #puts "\nTarget: #{@target_transformation.to_a.inspect}\n> Face: #{@target_face}\n> Path: #{path1.inspect}"
           else
             # If the ray hit different entities, then a common face must be
             # found.
@@ -469,6 +471,9 @@ module TT::Plugins::PlanTools
             global_high_pt = high_pt.transform( high_tr )
             global_low_pt = low_pt.transform( low_tr )
             
+            #puts "High: #{high_tr.to_a.inspect}"
+            #puts "Low: #{low_tr.to_a.inspect}"
+            
             #if high_path.last.is_a?( Sketchup::Face )
               line = [ global_low_pt, Z_AXIS ]
               
@@ -483,6 +488,7 @@ module TT::Plugins::PlanTools
                 @target_face = face
                 @target_transformation = high_tr
                 @segments.concat( [ high_pt, pt ] )
+                
               end
             #end
           
@@ -502,7 +508,10 @@ module TT::Plugins::PlanTools
     def onLButtonUp( flags, x, y, view )
       if @target_face && !@segments.empty?
         entities = @target_face.parent.entities
+        #p @target_transformation.to_a
         tr = @target_transformation.inverse
+        #tr = @target_transformation#.inverse
+        #tr = Geom::Transformation.new
         entities.model.start_operation( 'Project Down', true )
         #for segment in @segments
         for i in ( 0...@segments.size-1 )
@@ -583,7 +592,7 @@ module TT::Plugins::PlanTools
     def ray_transformation( path )
       stack = path.dup
       tr = Geom::Transformation.new
-      for i in ( 0...path.size-2 )
+      for i in ( 0...path.size-1 )
         tr = tr * path[i].transformation
       end unless path.empty?
       tr
@@ -771,6 +780,7 @@ module TT::Plugins::PlanTools
     extrude_time    = TT::format_time( Time.now - time_start_extrude )
     total_time      = TT::format_time( Time.now - time_start )
     puts "\n=== Extrude Up ==="
+    puts "> Faces: #{sorted_faces.size}"
     puts "> Raytracing: #{raytraced_time}"
     puts "> Extruding: #{extrude_time}"
     puts "Total: #{total_time}\n\n"
@@ -1747,7 +1757,7 @@ module TT::Plugins::PlanTools
     
     return if edges.empty?
     
-    TT::Model.start_operation('Grid Split')
+    TT::Model.start_operation('Edge Grid Split')
     
     min_x = bb.corner( TT::BB_LEFT_FRONT_BOTTOM ).x
     max_x = bb.corner( TT::BB_RIGHT_FRONT_BOTTOM ).x
