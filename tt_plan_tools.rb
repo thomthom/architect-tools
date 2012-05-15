@@ -389,9 +389,10 @@ module TT::Plugins::PlanTools
       
       @segments = []
       @projections = []
-      @hit_points = []
+      @hit_points = []     
       
-      @adjust_points = []
+      @mouse_face = nil
+      @mouse_tr = Geom::Transformation.new
     end
     
     # @since 2.0.0
@@ -409,96 +410,43 @@ module TT::Plugins::PlanTools
       ph = view.pick_helper
       ph.do_pick( x, y )
       
+      # Look for potential target face.
+      @mouse_face = ph.picked_face
+      @mouse_tr = get_pickhelper_transformation( ph, @mouse_face )
+      
+      # Look for entities to project.
       @entity = ph.picked_edge || ph.picked_face
       @transformation = get_pickhelper_transformation( ph, @entity )
       
+      # Project entities to target face.
       @segments.clear
       @projections.clear
       @hit_points.clear
-      @adjust_points.clear
-      @target_face = nil
-      status = ''
-      for edge in get_edges( @entity )
-        pt1, pt2 = edge.vertices.map { |v| v.position.transform!( @transformation ) }
-        ray1 = [ pt1, Z_AXIS.reverse ]
-        ray2 = [ pt2, Z_AXIS.reverse ]
-        #result1 = view.model.raytest( ray1 ) # Until face is found?
-        #result2 = view.model.raytest( ray2 )
-        result1 = ray_find_face( view.model, ray1 )
-        result2 = ray_find_face( view.model, ray2 )
-        target1, path1 = result1
-        target2, path2 = result2
-        if target1
-          @projections.concat( [ pt1, target1 ] )
-          @hit_points << target1
-          status += "Target1: #{path1.last}"
-        end
-        if target2
-          @projections.concat( [ pt2, target2 ] )
-          @hit_points << target2
-          status += " - Target2: #{path2.last}"
-        end
-        if target1 && target2
-          if path1.last == path2.last
-            # If the ray hit the same entity, then there is no problem.
+      status = "Entity: #{@entity}"
+      if @target_face
+        for edge in get_edges( @entity )
+          pt1, pt2 = edge.vertices.map { |v| v.position.transform!( @transformation ) }
+          ray1 = [ pt1, Z_AXIS.reverse ]
+          ray2 = [ pt2, Z_AXIS.reverse ]
+          target1 = Geom.intersect_line_plane( ray1, @target_face.plane )
+          target2 = Geom.intersect_line_plane( ray2, @target_face.plane )
+          # Validate results.
+          if target1
+            @projections.concat( [ pt1, target1 ] )
+            @hit_points << target1
+            status += "Target1: #{@target_face}"
+          end
+          if target2
+            @projections.concat( [ pt2, target2 ] )
+            @hit_points << target2
+            status += " - Target2: #{@target_face}"
+          end
+          if target1 && target2
             @segments.concat( [ target1, target2 ] )
-            @target_face = path1.last
-            @target_transformation = ray_transformation( path1 )
-            
-            #puts "\nTarget: #{@target_transformation.to_a.inspect}\n> Face: #{@target_face}\n> Path: #{path1.inspect}"
-          else
-            # If the ray hit different entities, then a common face must be
-            # found.
-            
-            # Assuming the target is a face.
-            
-            # Use the target of the highest hit and trace the other point back
-            # to the same plane.
-            if target1.z > target2.z
-              high = result1
-              low = result2
-            else
-              high = result2
-              low = result1
-            end
-            
-            high_pt, high_path = high
-            low_pt, low_path = low
-            
-            high_tr = ray_transformation( high_path )
-            low_tr = ray_transformation( low_path )
-            
-            global_high_pt = high_pt.transform( high_tr )
-            global_low_pt = low_pt.transform( low_tr )
-            
-            #puts "High: #{high_tr.to_a.inspect}"
-            #puts "Low: #{low_tr.to_a.inspect}"
-            
-            #if high_path.last.is_a?( Sketchup::Face )
-              line = [ global_low_pt, Z_AXIS ]
-              
-              face = high_path.last
-              vector = face.normal.transform!( high_tr )
-              pt = face.vertices[0].position.transform!( high_tr )
-              plane = [ pt, vector ]
-              
-              pt = Geom.intersect_line_plane( line, plane )
-              if pt
-                @adjust_points << pt
-                @target_face = face
-                @target_transformation = high_tr
-                @segments.concat( [ high_pt, pt ] )
-                
-              end
-            #end
-          
           end
         end
       end
       Sketchup.status_text = status
-      
-      #view.model.selection.clear
-      #view.model.selection.add( @target_face ) if @target_face
       
       view.tooltip = @entity.typename if @entity
       view.invalidate
@@ -508,20 +456,20 @@ module TT::Plugins::PlanTools
     def onLButtonUp( flags, x, y, view )
       if @target_face && !@segments.empty?
         entities = @target_face.parent.entities
-        #p @target_transformation.to_a
         tr = @target_transformation.inverse
-        #tr = @target_transformation#.inverse
-        #tr = Geom::Transformation.new
         entities.model.start_operation( 'Project Down', true )
-        #for segment in @segments
         for i in ( 0...@segments.size-1 )
           segment = @segments[i,2]
           local_pts = segment.map { |pt| pt.transform( tr ) }
           g = entities.add_group
           g.entities.add_line( local_pts )
-          g.explode # Triggering SketchUp's auto-marge feature.
+          g.explode # Triggering SketchUp's auto-merge feature.
         end
         entities.model.commit_operation
+      else
+        # Pick target face. ( Plane and entities )
+        @target_face = @mouse_face
+        @target_transformation = @mouse_tr
       end
       @segments.clear
       view.invalidate
@@ -529,6 +477,7 @@ module TT::Plugins::PlanTools
     
     # @since 2.0.0
     def draw( view )
+      # Source entities being projected.
       if @entity
         view.line_stipple = ''
         view.line_width = 5
@@ -544,23 +493,19 @@ module TT::Plugins::PlanTools
         end
       end
       
+      # Target Face.
       if @target_face && @target_face.valid?
         triangles = []
         pm = @target_face.mesh
         for i in ( 1..pm.count_polygons )
           pts = pm.polygon_points_at( i )
-          pts.each { |pt| triangles << pt.transform!( @transformation ) }
+          pts.each { |pt| triangles << pt.transform!( @target_transformation ) }
         end
         view.drawing_color = [0,128,255,64]
         view.draw( GL_TRIANGLES, triangles )
-        
-        #pts = @target_face.outer_loop.vertices.map { |v|
-        #  v.position.transform!( @transformation )
-        #}
-        #view.drawing_color = [0,128,255,64]
-        #view.draw( GL_POLYGON, pts )
       end
       
+      # Projection rays.
       unless @projections.empty?
         view.line_stipple = '_'
         view.line_width = 1
@@ -568,6 +513,7 @@ module TT::Plugins::PlanTools
         view.draw( GL_LINES, @projections )
       end
       
+      # Projected segment.
       unless @segments.empty?
         view.line_stipple = ''
         view.line_width = 2
@@ -575,16 +521,11 @@ module TT::Plugins::PlanTools
         view.draw( GL_LINES, @segments )
       end
       
+      # Projection intersection with target plane.
       unless @hit_points.empty?
         view.line_stipple = ''
         view.line_width = 2
         view.draw_points( @hit_points, 6, 4, [255,0,0] )
-      end
-      
-      unless @adjust_points.empty?
-        view.line_stipple = ''
-        view.line_width = 2
-        view.draw_points( @adjust_points, 6, 4, [0,128,255] )
       end
     end
     
