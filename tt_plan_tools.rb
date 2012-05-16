@@ -212,8 +212,12 @@ module TT::Plugins::PlanTools
       @projections = []
       @hit_points = []
       
+      @picked_faces = {}
       @faces = []
       @vertices = {}
+      
+      @adjust_pt = nil
+      @adjust_vertex = nil
     end
     
     # @since 2.0.0
@@ -227,12 +231,110 @@ module TT::Plugins::PlanTools
     end
     
     # @since 2.0.0
+    def onKeyUp( key, repeat, flags, view )
+      case key
+      when 38 # Up
+        if @adjust_vertex && @adjust_up
+          vector = @adjust_vertex.position.vector_to( @adjust_up )
+          @vertices[ @adjust_vertex ][0] = vector
+          @vertices[ @adjust_vertex ][1] = @adjust_up
+          #puts 'Adjust Up'
+          update_polygons()
+          view.invalidate
+        else
+          puts 'Beep'
+          UI.beep
+        end
+      when 40 # Down
+        if @adjust_vertex && @adjust_down
+          vector = @adjust_vertex.position.vector_to( @adjust_down )
+          @vertices[ @adjust_vertex ][0] = vector
+          @vertices[ @adjust_vertex ][1] = @adjust_down
+          #puts 'Adjust Down'
+          update_polygons()
+          view.invalidate
+        else
+          puts 'Beep'
+          UI.beep
+        end
+      end
+    end
+    
+    # @since 2.0.0
     def onMouseMove( flags, x, y, view )
+      if @adjust_vertex && flags & MK_LBUTTON == MK_LBUTTON
+        # Adjust a point by moving the mouse up and down along the Z axis of
+        # the point being adjusted.
+        ray = view.pickray( x, y )
+        line = [ @adjust_pt, Z_AXIS ]
+        pt1, pt2 = Geom::closest_points( line, ray )
+        vector = @adjust_vertex.position.vector_to( pt1 )
+        
+        # Snap to nearby ray hits.
+        if @adjust_up
+          aperture_up   = view.pixels_to_model( 15, @adjust_up )
+          if pt1.distance( @adjust_up ) < aperture_up
+            pt1 = @adjust_up
+          end
+        end
+        if @adjust_down
+          aperture_down = view.pixels_to_model( 15, @adjust_down )
+          if pt1.distance( @adjust_down ) < aperture_down
+            pt1 = @adjust_down
+          end
+        end
+        
+        @vertices[ @adjust_vertex ] = [ vector, pt1 ]
+        @adjust_pt = pt1
+        
+        update_polygons()
+        
+        view.invalidate
+        #return false
+      end
+      
+      
       ph = view.pick_helper
+      
+      # Modify points.
+      unless @adjust_vertex && flags & MK_LBUTTON == MK_LBUTTON
+        @adjust_pt = nil
+        @adjust_vertex = nil
+      end
+      ph.init( x, y, 10 )
+      for vertex, data in @vertices
+        vector, pt = data
+        #pt = vertex.position.offset( vector )
+        next unless ph.test_point( pt )
+        
+        unless @adjust_vertex && flags & MK_LBUTTON == MK_LBUTTON
+          @adjust_pt = pt
+          @adjust_vertex = vertex
+        end
+        
+        ray_up   = [ pt, Z_AXIS ]
+        ray_down = [ pt, Z_AXIS.reverse ]
+        pt_up   = view.model.raytest( ray_up )
+        pt_down = view.model.raytest( ray_down )
+        
+        @adjust_up   = (pt_up) ? pt_up[0] : nil
+        @adjust_down = (pt_down) ? pt_down[0] : nil
+        
+        break
+      end
+      
+      if @adjust_vertex && flags & MK_LBUTTON == MK_LBUTTON
+        return false
+      end
+      
+      
+      # Pick faces to magnetize.
       ph.do_pick( x, y )
       
       face = ph.picked_face
       tr = get_pickhelper_transformation( ph, face )
+      
+      @picked_face = face
       
       @mouse_target = face
       @mouse_transformation = tr
@@ -240,6 +342,12 @@ module TT::Plugins::PlanTools
       @mouse_hit_points.clear
       @mouse_triangles.clear
       @mouse_vertices.clear
+      
+      if @adjust_pt
+        @mouse_target = nil
+        view.invalidate
+        return
+      end
       
       if face && face.vertices.size < 100
         offsets = {}
@@ -264,7 +372,7 @@ module TT::Plugins::PlanTools
           pts = pm.polygon_points_at( i )
           pts.each { |pt|
             vector = offsets[ pt.to_a ]
-            pt.offset!( vector )  if vector
+            pt.offset!( vector ) if vector
             pt.transform!( @mouse_transformation )
             @mouse_triangles << pt
           }
@@ -279,6 +387,7 @@ module TT::Plugins::PlanTools
       unless @mouse_vertices.empty?
         @vertices.merge!( @mouse_vertices )
         @faces << @mouse_triangles.dup
+        @picked_faces[ @picked_face ] = @mouse_transformation
       end
       view.invalidate
     end
@@ -311,6 +420,7 @@ module TT::Plugins::PlanTools
           end
         end
         view.model.commit_operation
+        @picked_faces.clear
         @vertices.clear
         @faces.clear
         view.invalidate
@@ -349,13 +459,74 @@ module TT::Plugins::PlanTools
         view.draw_points( @mouse_hit_points, 6, 4, [0,128,255] )
       end
       
+      unless @vertices.empty?
+        view.line_stipple = ''
+        view.line_width = 2
+        view.draw_points( @vertices.values, 6, 4, [0,128,255] )
+      end
+      
+      view.draw2d( GL_LINES, [-10,-10,-10], [-20,-20,-20] )
+      
       unless @faces.empty?
         view.drawing_color = [0,128,255,64]
         for triangles in @faces
           view.draw( GL_TRIANGLES, triangles )
         end
       end
+      
+      if @adjust_pt
+        pt2d = view.screen_coords( @adjust_pt )
+        circle = TT::Geom3d.circle( pt2d, Z_AXIS, 10, 16 )
+        view.line_stipple = ''
+        view.line_width = 2
+        view.drawing_color = [255,0,0]
+        view.draw2d( GL_LINE_LOOP, circle )
+        #view.draw2d( GL_LINE_LOOP, circle )
+        
+        size = view.pixels_to_model( 200, @adjust_pt )
+        if @adjust_up && @adjust_pt.distance( @adjust_up ) > size
+          pt1 = @adjust_up
+        else
+          pt1 = @adjust_pt.offset( Z_AXIS, size )
+        end
+        if @adjust_down && @adjust_pt.distance( @adjust_down ) > size
+          pt2 = @adjust_down
+        else
+          pt2 = @adjust_pt.offset( Z_AXIS.reverse, size )
+        end
+        view.line_stipple = '-'
+        view.line_width = 1
+        view.drawing_color = [255,0,0]
+        view.draw( GL_LINES, [pt1, pt2] )
+        
+        view.line_stipple = ''
+        view.line_width = 2
+        view.draw_points( [@adjust_up], 8, 3, [255,0,0] ) if @adjust_up
+        view.draw_points( [@adjust_down], 8, 3, [255,0,0] ) if @adjust_down
+        
+        view.draw_points( [@adjust_pt], 8, 4, [255,0,0] )
+      end
 
+    end
+    
+    def update_polygons
+      @faces.clear
+      for face, transformation in @picked_faces
+        vertices = {}
+        for vertex in face.vertices
+          vertices[ vertex.position.to_a ] = vertex
+        end
+        pm = face.mesh
+        for i in ( 1..pm.count_polygons )
+          triangle = []
+          pts = pm.polygon_points_at( i )
+          pts.each { |pt|
+            vertex = vertices[ pt.to_a ]
+            triangle << @vertices[ vertex ][1]
+          }
+          @faces << triangle
+        end
+      end
     end
     
     # @param [Sketchup::PickHelper] ph
