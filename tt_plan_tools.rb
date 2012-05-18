@@ -199,25 +199,22 @@ module TT::Plugins::PlanTools
     
     # @since 2.0.0
     def initialize
-      @mouse_target = nil
-      @mouse_transformation = nil
+      @mouse_target = nil         # Face under the mouse cursor.
+      @mouse_transformation = nil # For generating global co-ordinates.
+      @mouse_hit_points = []      # Projected from source face to target plane.
+      @mouse_projections = []     # Segments for visualizing projection.
+      @mouse_triangles = []       # Array of triangle points for GL_TRIANGLE
+      @mouse_vertices = {}        # Hash[ Vertex ] = [ LocalVector, GlobalPoint ]
       
-      @mouse_projections = []
-      @mouse_hit_points = []
+      @picked_faces = {}  # Hash[ Face ] = Transformation
+      @hit_points = []    # Projected points.
+      @projections = []   # Projection segments. ( GL_LINES )
+      @faces = []         # Array of triangles. ( GL_TRIANGLE )
+      @vertices = {}      # Hash[ Vertex ] = [ LocalVector, GlobalPoint ]
       
-      @mouse_triangles = []
-      
-      @mouse_vertices = {}
-      
-      @projections = []
-      @hit_points = []
-      
-      @picked_faces = {}
-      @faces = []
-      @vertices = {}
-      
-      @adjust_pt = nil
-      @adjust_vertex = nil
+      @adjust_vertex = nil  # Vertex being adjusted.
+      @adjust_pt = nil      # New local position for vertex.
+      @snap_points = []     # Snapping point for adjusting vertices.
     end
     
     # @since 2.0.0
@@ -236,25 +233,19 @@ module TT::Plugins::PlanTools
       when 38 # Up
         if @adjust_vertex && @adjust_up
           vector = @adjust_vertex.position.vector_to( @adjust_up )
-          @vertices[ @adjust_vertex ][0] = vector
-          @vertices[ @adjust_vertex ][1] = @adjust_up
-          #puts 'Adjust Up'
+          @vertices[ @adjust_vertex ] = [ vector, @adjust_up ]
           update_polygons()
           view.invalidate
         else
-          puts 'Beep'
           UI.beep
         end
       when 40 # Down
         if @adjust_vertex && @adjust_down
           vector = @adjust_vertex.position.vector_to( @adjust_down )
-          @vertices[ @adjust_vertex ][0] = vector
-          @vertices[ @adjust_vertex ][1] = @adjust_down
-          #puts 'Adjust Down'
+          @vertices[ @adjust_vertex ] = [ vector, @adjust_down ]
           update_polygons()
           view.invalidate
         else
-          puts 'Beep'
           UI.beep
         end
       end
@@ -262,7 +253,23 @@ module TT::Plugins::PlanTools
     
     # @since 2.0.0
     def onMouseMove( flags, x, y, view )
-      if @adjust_vertex && flags & MK_LBUTTON == MK_LBUTTON
+      ph = view.pick_helper
+      ph.init( x, y, 10 )
+      
+      # Find picked point.
+      picked_point = nil
+      picked_vertex = nil
+      for vertex, data in @vertices
+        vector, point = data
+        next unless ph.test_point( point )
+        picked_point = point
+        picked_vertex = vertex
+        break
+      end
+      
+      # Adjust point when left mouse button is pressed down.
+      adjusting_vertex = @adjust_vertex && flags & MK_LBUTTON == MK_LBUTTON
+      if adjusting_vertex
         # Adjust a point by moving the mouse up and down along the Z axis of
         # the point being adjusted.
         ray = view.pickray( x, y )
@@ -271,70 +278,59 @@ module TT::Plugins::PlanTools
         vector = @adjust_vertex.position.vector_to( pt1 )
         
         # Snap to nearby ray hits.
-        if @adjust_up
-          aperture_up   = view.pixels_to_model( 15, @adjust_up )
-          if pt1.distance( @adjust_up ) < aperture_up
-            pt1 = @adjust_up
+        current_snap = nil
+        current_distance = nil
+        for point in @snap_points
+          #p point
+          aperture = view.pixels_to_model( 15, point )
+          distance = pt1.distance( point )
+          next unless distance < aperture
+          if current_distance
+            next unless distance < current_distance
           end
-        end
-        if @adjust_down
-          aperture_down = view.pixels_to_model( 15, @adjust_down )
-          if pt1.distance( @adjust_down ) < aperture_down
-            pt1 = @adjust_down
-          end
+          current_distance = distance
+          current_snap = point
+          pt1 = point
         end
         
+        # Update points.
         @vertices[ @adjust_vertex ] = [ vector, pt1 ]
         @adjust_pt = pt1
-        
         update_polygons()
-        
-        view.invalidate
-        #return false
+      else
+        # Select point to adjust.
+        @adjust_pt = picked_point
+        @adjust_vertex = picked_vertex
+        @snap_points.clear
       end
-      
-      
-      ph = view.pick_helper
-      
-      # Modify points.
-      unless @adjust_vertex && flags & MK_LBUTTON == MK_LBUTTON
-        @adjust_pt = nil
-        @adjust_vertex = nil
-      end
-      ph.init( x, y, 10 )
-      for vertex, data in @vertices
-        vector, pt = data
-        #pt = vertex.position.offset( vector )
-        next unless ph.test_point( pt )
-        
-        unless @adjust_vertex && flags & MK_LBUTTON == MK_LBUTTON
-          @adjust_pt = pt
-          @adjust_vertex = vertex
+
+      # Find points to snap to.
+      if @adjust_pt
+        # Avoid doing too many raytest - only ray new rays when the adjusting
+        # point it going further than it previously did.
+        bb = Geom::BoundingBox.new
+        bb.add( @snap_points ) unless @snap_points.empty?
+        z = @adjust_pt.z
+        if @snap_points.empty? || z < bb.min.z || z > bb.max.z
+          ray_up   = [ @adjust_pt, Z_AXIS ]
+          ray_down = [ @adjust_pt, Z_AXIS.reverse ]
+          pt_up   = view.model.raytest( ray_up )
+          pt_down = view.model.raytest( ray_down )
+          @snap_points << pt_up[0].to_a if pt_up
+          @snap_points << pt_down[0].to_a if pt_down
+          @snap_points.uniq!
         end
-        
-        ray_up   = [ pt, Z_AXIS ]
-        ray_down = [ pt, Z_AXIS.reverse ]
-        pt_up   = view.model.raytest( ray_up )
-        pt_down = view.model.raytest( ray_down )
-        
-        @adjust_up   = (pt_up) ? pt_up[0] : nil
-        @adjust_down = (pt_down) ? pt_down[0] : nil
-        
-        break
       end
-      
-      if @adjust_vertex && flags & MK_LBUTTON == MK_LBUTTON
+
+      if adjusting_vertex
+        view.invalidate
         return false
       end
       
-      
       # Pick faces to magnetize.
       ph.do_pick( x, y )
-      
       face = ph.picked_face
       tr = get_pickhelper_transformation( ph, face )
-      
-      @picked_face = face
       
       @mouse_target = face
       @mouse_transformation = tr
@@ -343,14 +339,16 @@ module TT::Plugins::PlanTools
       @mouse_triangles.clear
       @mouse_vertices.clear
       
+      # If point is being adjusted - don't pick a face to magnetize.
       if @adjust_pt
         @mouse_target = nil
         view.invalidate
         return
       end
       
-      if face && face.vertices.size < 100
-        offsets = {}
+      # Project the face vertices upwards until they hit geometry.
+      if face && face.vertices.size < 100 # (!) Fixed limit!!
+        offsets = {} # Cache for mapping PolygonMesh points to adjustment vectors.
         for vertex in face.vertices
           pt = vertex.position.transform!( tr )
           ray = [ pt, Z_AXIS ]
@@ -360,13 +358,13 @@ module TT::Plugins::PlanTools
           @mouse_projections << pt
           @mouse_projections << hit_pt
           @mouse_hit_points << hit_pt
-          
           vector = pt.vector_to( hit_pt )
           if vector.valid?
             @mouse_vertices[vertex] = [ vector, hit_pt ] # Vector, Global Point
             offsets[vertex.position.to_a] = vector
           end
         end
+        # Extract the PolygonMesh to be used with GL_TRIANGLE.
         pm = face.mesh
         for i in ( 1..pm.count_polygons )
           pts = pm.polygon_points_at( i )
@@ -384,11 +382,13 @@ module TT::Plugins::PlanTools
     
     # @since 2.0.0
     def onLButtonUp( flags, x, y, view )
+      # If mouse hovers over a face, add it to the stack of magnetized faces.
       unless @mouse_vertices.empty?
         @vertices.merge!( @mouse_vertices )
         @faces << @mouse_triangles.dup
-        @picked_faces[ @picked_face ] = @mouse_transformation
+        @picked_faces[ @mouse_target ] = @mouse_transformation
       end
+      @snap_points.clear
       view.invalidate
     end
     
@@ -475,6 +475,7 @@ module TT::Plugins::PlanTools
       end
       
       if @adjust_pt
+        # Highlight point under mouse cursor.
         pt2d = view.screen_coords( @adjust_pt )
         circle = TT::Geom3d.circle( pt2d, Z_AXIS, 10, 16 )
         view.line_stipple = ''
@@ -483,32 +484,34 @@ module TT::Plugins::PlanTools
         view.draw2d( GL_LINE_LOOP, circle )
         #view.draw2d( GL_LINE_LOOP, circle )
         
-        size = view.pixels_to_model( 200, @adjust_pt )
-        if @adjust_up && @adjust_pt.distance( @adjust_up ) > size
-          pt1 = @adjust_up
-        else
-          pt1 = @adjust_pt.offset( Z_AXIS, size )
+        # Snapping points.
+        unless @snap_points.empty?
+          size = view.pixels_to_model( 200, @adjust_pt )
+          bb = Geom::BoundingBox.new
+          bb.add( @snap_points )
+          pt1 = @adjust_pt.offset( Z_AXIS, bb.max.z + size )
+          pt2 = @adjust_pt.offset( Z_AXIS.reverse, bb.min.z + size )
+          
+          view.line_stipple = '-'
+          view.line_width = 1
+          view.drawing_color = [255,0,0]
+          view.draw( GL_LINES, [pt1, pt2] )
+          
+          view.line_stipple = ''
+          view.line_width = 2
+          view.draw_points( @snap_points, 8, 3, [255,0,0] )
         end
-        if @adjust_down && @adjust_pt.distance( @adjust_down ) > size
-          pt2 = @adjust_down
-        else
-          pt2 = @adjust_pt.offset( Z_AXIS.reverse, size )
-        end
-        view.line_stipple = '-'
-        view.line_width = 1
-        view.drawing_color = [255,0,0]
-        view.draw( GL_LINES, [pt1, pt2] )
         
-        view.line_stipple = ''
-        view.line_width = 2
-        view.draw_points( [@adjust_up], 8, 3, [255,0,0] ) if @adjust_up
-        view.draw_points( [@adjust_down], 8, 3, [255,0,0] ) if @adjust_down
-        
+        # Cursor point.
         view.draw_points( [@adjust_pt], 8, 4, [255,0,0] )
       end
 
     end
     
+    # Regenerates the triangle cache for previewing the adjusted mesh.
+    # Needs to be called when the content of @vertices is modified.
+    # 
+    # @since 2.0.0
     def update_polygons
       @faces.clear
       for face, transformation in @picked_faces
