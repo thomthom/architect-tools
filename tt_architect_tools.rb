@@ -52,8 +52,8 @@ module TT::Plugins::ArchitectTools
     cmd_generate_buildings = cmd
     
     cmd = UI::Command.new( 'Merge Solid Buildings' ) { self.merge_solid_buildings }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'MergeSolidBuildings_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'MergeSolidBuildings_24.png' )
     cmd.tooltip = 'Merge Solid Buildings'
     cmd_merge_solid_buildings = cmd
     
@@ -64,8 +64,8 @@ module TT::Plugins::ArchitectTools
     cmd_fill_solid_holes = cmd
     
     cmd = UI::Command.new( 'Select Non-Solids' ) { self.select_non_solids }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'SelectNonSolids_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'SelectNonSolids_24.png' )
     cmd.tooltip = 'Select Non-Solids'
     cmd_select_non_solids = cmd
     
@@ -76,8 +76,8 @@ module TT::Plugins::ArchitectTools
     cmd_make_road_profile = cmd
     
     cmd = UI::Command.new( 'Move to Z' ) { self.move_to_z }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'MoveToZ_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'MoveToZ_24.png' )
     cmd.status_bar_text = 'Moves all selected vertices to the given Z height.'
     cmd.tooltip = 'Move to Z'
     cmd_move_to_z = cmd
@@ -119,8 +119,8 @@ module TT::Plugins::ArchitectTools
     cmd_crop_selection = cmd
     
     cmd = UI::Command.new( 'Edge Grid Divide' ) { self.grid_divide_ui }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'EdgeGridDivide_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'EdgeGridDivide_24.png' )
     cmd.tooltip = 'Edge Grid Divide'
     cmd_grid_divide_ui = cmd
     
@@ -424,6 +424,14 @@ module TT::Plugins::ArchitectTools
         @vertices.clear
         @faces.clear
         view.invalidate
+      end
+    end
+    
+    # @since 2.0.0
+    def onSetCursor
+      if @adjust_pt
+        cursor_id = TT::Cursor.get_id( :scale_n_s )
+        UI.set_cursor( cursor_id )
       end
     end
     
