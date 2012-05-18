@@ -8,17 +8,17 @@
 require 'sketchup.rb'
 require 'TT_Lib2/core.rb'
 
-TT::Lib.compatible?('2.7.0', 'TT Plan Tools')
+TT::Lib.compatible?('2.7.0', 'TT Architect Tools')
 
 #-------------------------------------------------------------------------------
 
-module TT::Plugins::PlanTools
+module TT::Plugins::ArchitectTools
   
   ### CONSTANTS ### ------------------------------------------------------------
   
   # Plugin information
-  PLUGIN_ID       = 'TT_PlanTools'.freeze
-  PLUGIN_NAME     = 'Plan Tools²'.freeze
+  PLUGIN_ID       = 'TT_ArchitectTools'.freeze
+  PLUGIN_NAME     = 'Architect Tools'.freeze
   PLUGIN_VERSION  = TT::Version.new(2,0,0).freeze
   
   # Version information
@@ -26,7 +26,7 @@ module TT::Plugins::PlanTools
   
   # Resource paths
   PATH_ROOT   = File.dirname( __FILE__ ).freeze
-  PATH        = File.join( PATH_ROOT, 'TT_PlanTools' ).freeze
+  PATH        = File.join( PATH_ROOT, 'TT_ArchitectTools' ).freeze
   PATH_ICONS  = File.join( PATH, 'Icons' ).freeze
   
   
@@ -58,8 +58,8 @@ module TT::Plugins::PlanTools
     cmd_merge_solid_buildings = cmd
     
     cmd = UI::Command.new( 'Fill Solid Holes' ) { self.fill_solid_holes }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'FillSolidHoles_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'FillSolidHoles_24.png' )
     cmd.tooltip = 'Fill Solid Holes'
     cmd_fill_solid_holes = cmd
     
@@ -95,8 +95,8 @@ module TT::Plugins::PlanTools
     cmd_extrude_up = cmd
     
     cmd = UI::Command.new( 'Project Down Tool' ) { self.project_tool }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'ProjectDown_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'ProjectDown_24.png' )
     cmd.tooltip = 'Project Down Tool'
     cmd_project_tool = cmd
     
@@ -113,8 +113,8 @@ module TT::Plugins::PlanTools
     cmd_flatten_selection = cmd
     
     cmd = UI::Command.new( 'Crop Selection to Boundary' ) { self.crop_selection }
-    cmd.small_icon = File.join( PATH_ICONS, 'Dummy_16.png' )
-    cmd.large_icon = File.join( PATH_ICONS, 'Dummy_24.png' )
+    cmd.small_icon = File.join( PATH_ICONS, 'CropToBoundary_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'CropToBoundary_24.png' )
     cmd.tooltip = 'Crop Selection to Boundary'
     cmd_crop_selection = cmd
     
@@ -2269,7 +2269,7 @@ module TT::Plugins::PlanTools
   
   ### DEBUG ### ----------------------------------------------------------------
   
-  # TT::Plugins::PlanTools.reload
+  # TT::Plugins::ArchitectTools.reload
   def self.reload
     load __FILE__
   end
