@@ -180,7 +180,7 @@ module TT::Plugins::ArchitectTools
       :author => 'thomthom',
       :version => PLUGIN_VERSION.to_s,
       :date => RELEASE_DATE,   
-      :description => 'Tools for generating site plan models, generate buildings and roads.',
+      :description => 'Tools for generate buildings, roads, terrain and etc from siteplans.',
       :link_info => 'http://forums.sketchucation.com/viewtopic.php?f=323&t=30512'
     }
   end
@@ -218,37 +218,19 @@ module TT::Plugins::ArchitectTools
     end
     
     # @since 2.0.0
+    def activate
+      update_UI()
+    end
+    
+    # @since 2.0.0
     def deactivate( view )
       view.invalidate
     end
     
     # @since 2.0.0
     def resume( view )
+      update_UI()
       view.invalidate
-    end
-    
-    # @since 2.0.0
-    def onKeyUp( key, repeat, flags, view )
-      case key
-      when 38 # Up
-        if @adjust_vertex && @adjust_up
-          vector = @adjust_vertex.position.vector_to( @adjust_up )
-          @vertices[ @adjust_vertex ] = [ vector, @adjust_up ]
-          update_polygons()
-          view.invalidate
-        else
-          UI.beep
-        end
-      when 40 # Down
-        if @adjust_vertex && @adjust_down
-          vector = @adjust_vertex.position.vector_to( @adjust_down )
-          @vertices[ @adjust_vertex ] = [ vector, @adjust_down ]
-          update_polygons()
-          view.invalidate
-        else
-          UI.beep
-        end
-      end
     end
     
     # @since 2.0.0
@@ -275,18 +257,16 @@ module TT::Plugins::ArchitectTools
         ray = view.pickray( x, y )
         line = [ @adjust_pt, Z_AXIS ]
         pt1, pt2 = Geom::closest_points( line, ray )
-        vector = @adjust_vertex.position.vector_to( pt1 )
         
         # Snap to nearby ray hits.
         current_snap = nil
         current_distance = nil
         for point in @snap_points
-          #p point
           aperture = view.pixels_to_model( 15, point )
           distance = pt1.distance( point )
-          next unless distance < aperture
+          next if distance > aperture
           if current_distance
-            next unless distance < current_distance
+            next if distance > current_distance
           end
           current_distance = distance
           current_snap = point
@@ -294,6 +274,7 @@ module TT::Plugins::ArchitectTools
         end
         
         # Update points.
+        vector = @adjust_vertex.position.vector_to( pt1 )
         @vertices[ @adjust_vertex ] = [ vector, pt1 ]
         @adjust_pt = pt1
         update_polygons()
@@ -375,6 +356,7 @@ module TT::Plugins::ArchitectTools
             @mouse_triangles << pt
           }
         end
+      
       end
       
       view.invalidate
@@ -490,7 +472,6 @@ module TT::Plugins::ArchitectTools
         view.line_width = 2
         view.drawing_color = [255,0,0]
         view.draw2d( GL_LINE_LOOP, circle )
-        #view.draw2d( GL_LINE_LOOP, circle )
         
         # Snapping points.
         unless @snap_points.empty?
@@ -516,6 +497,11 @@ module TT::Plugins::ArchitectTools
 
     end
     
+    # @since 2.0.0
+    def update_UI
+      Sketchup.status_text = 'Click a face to magnetize it. Click and drag a point to adjust it. Press Return to commit.'
+    end
+    
     # Regenerates the triangle cache for previewing the adjusted mesh.
     # Needs to be called when the content of @vertices is modified.
     # 
@@ -523,17 +509,26 @@ module TT::Plugins::ArchitectTools
     def update_polygons
       @faces.clear
       for face, transformation in @picked_faces
-        vertices = {}
-        for vertex in face.vertices
-          vertices[ vertex.position.to_a ] = vertex
-        end
         pm = face.mesh
+        # Map PolygonMesh point index to vertex.
+        indexes = {}
+        for vertex in face.vertices
+          index = pm.point_index( vertex.position )
+          indexes[ index ] = vertex
+        end
+        # Rebuild modified PolygonMesh.
         for i in ( 1..pm.count_polygons )
           triangle = []
-          pts = pm.polygon_points_at( i )
-          pts.each { |pt|
-            vertex = vertices[ pt.to_a ]
-            triangle << @vertices[ vertex ][1]
+          polygon = pm.polygon_at( i )
+          polygon.each { |point_index|
+            # Look up what vertex the position refer to.
+            index = point_index.abs
+            vertex = indexes[ index ]
+            if @vertices.key?( vertex )
+              triangle << @vertices[ vertex ][1]
+            else
+              triangle << vertex.position
+            end
           }
           @faces << triangle
         end
