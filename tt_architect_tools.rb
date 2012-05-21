@@ -573,12 +573,18 @@ module TT::Plugins::ArchitectTools
     end
     
     # @since 2.0.0
+    def activate
+      update_UI()
+    end
+    
+    # @since 2.0.0
     def deactivate( view )
       view.invalidate
     end
     
     # @since 2.0.0
     def resume( view )
+      update_UI()
       view.invalidate
     end
     
@@ -599,7 +605,7 @@ module TT::Plugins::ArchitectTools
       @segments.clear
       @projections.clear
       @hit_points.clear
-      status = "Entity: #{@entity}"
+      #status = "Entity: #{@entity}"
       if @target_face
         for edge in get_edges( @entity )
           pt1, pt2 = edge.vertices.map { |v| v.position.transform!( @transformation ) }
@@ -611,19 +617,19 @@ module TT::Plugins::ArchitectTools
           if target1
             @projections.concat( [ pt1, target1 ] )
             @hit_points << target1
-            status += "Target1: #{@target_face}"
+            #status += "Target1: #{@target_face}"
           end
           if target2
             @projections.concat( [ pt2, target2 ] )
             @hit_points << target2
-            status += " - Target2: #{@target_face}"
+            #status += " - Target2: #{@target_face}"
           end
           if target1 && target2
             @segments.concat( [ target1, target2 ] )
           end
         end
       end
-      Sketchup.status_text = status
+      #Sketchup.status_text = status
       
       view.tooltip = @entity.typename if @entity
       view.invalidate
@@ -704,6 +710,11 @@ module TT::Plugins::ArchitectTools
         view.line_width = 2
         view.draw_points( @hit_points, 6, 4, [255,0,0] )
       end
+    end
+    
+    # @since 2.0.0
+    def update_UI
+      Sketchup.status_text = 'Pick a face to set target plane and context. Pick edges to project edges to plane.'
     end
     
     # @since 2.0.0
