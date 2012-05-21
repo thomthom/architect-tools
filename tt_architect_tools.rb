@@ -196,7 +196,7 @@ module TT::Plugins::ArchitectTools
       :author => 'thomthom',
       :version => PLUGIN_VERSION.to_s,
       :date => RELEASE_DATE,   
-      :description => 'Tools for generate buildings, roads, terrain and etc from siteplans.',
+      :description => 'Tools for generating buildings, roads, terrain and etc from siteplans.',
       :link_info => 'http://forums.sketchucation.com/viewtopic.php?f=323&t=30512'
     }
   end
