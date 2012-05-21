@@ -6,11 +6,27 @@
 #-------------------------------------------------------------------------------
 
 require 'sketchup.rb'
-require 'TT_Lib2/core.rb'
+begin
+  require 'TT_Lib2/core.rb'
+rescue LoadError => e
+  timer = UI.start_timer( 0, false ) {
+    UI.stop_timer( timer )
+    filename = File.basename( __FILE__ )
+    message = "#{filename} require TT_Lib² to be installed.\n"
+    message << "\n"
+    message << "Would you like to open a webpage where you can download TT_Lib²?"
+    result = UI.messagebox( message, MB_YESNO )
+    if result == 6 # YES
+      UI.openURL( 'http://www.thomthom.net/software/tt_lib2/' )
+    end
+  }
+end
 
-TT::Lib.compatible?('2.7.0', 'TT Architect Tools')
 
 #-------------------------------------------------------------------------------
+
+if defined?( TT::Lib ) && TT::Lib.compatible?('2.7.0', 'Architect Tools')
+
 
 module TT::Plugins::ArchitectTools
   
@@ -2289,6 +2305,9 @@ module TT::Plugins::ArchitectTools
   end
   
 end # module
+
+
+end # if TT_Lib
 
 #-------------------------------------------------------------------------------
 file_loaded( __FILE__ )
