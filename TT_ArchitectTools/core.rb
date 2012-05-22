@@ -2107,79 +2107,192 @@ module TT::Plugins::ArchitectTools
   
   ##############################################################################
   
-  
   def self.grid_divide_ui
-    options = {
-      :title => 'Grid Divide',
-      :pref_key => PLUGIN_ID,
-      :modal => true,
-      :accept_label => 'Divide'
-    }
-    i = TT::GUI::Inputbox.new(options)
-    i.add_control( {
-      :key   => :size,
-      :label => 'Grid Size',
-      :value => 10.m
-    } )
-    i.prompt { |results|
-      if results
-        self.grid_divide( results[:size] )
+    Sketchup.active_model.select_tool( GridDivideTool.new )
+  end
+  
+  # @since 2.0.0
+  class GridDivideTool
+    
+    # @since 2.0.0
+    def initialize
+      @settings = TT::Settings.new( PLUGIN_ID )
+      @settings.set_default( :grid_size, 10.m ) 
+      
+      @bounds = Geom::BoundingBox.new
+      @plane = []
+      @grid_segments = []
+    end
+    
+    # @since 2.0.0
+    def enableVCB?
+      true
+    end
+    
+    # @since 2.0.0
+    def activate
+      calculate_boundingbox()
+      calculate_grid()
+      update_UI()
+      Sketchup.active_model.active_view.invalidate
+    end
+    
+    # @since 2.0.0
+    def deactivate( view )
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def resume( view )
+      update_UI()
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def onUserText( text, view )
+      size = text.to_l
+      @settings[ :grid_size ] = size
+      calculate_grid()
+    rescue ArgumentError
+      UI.beep
+    ensure
+      update_UI()
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def onLButtonDoubleClick( flags, x, y, view )
+      intersect_grid_edges()
+    end
+    
+    # @since 2.0.0
+    def onReturn( view )
+      intersect_grid_edges()
+    end
+    
+    # @since 2.0.0
+    def draw( view )
+      
+      unless @grid_segments.empty?
+        view.line_stipple = ''
+        view.line_width = 2
+        view.drawing_color = [255,0,0]
+        view.draw( GL_LINES, @grid_segments )
+        
+        view.drawing_color = [255,0,0,64]
+        view.draw( GL_QUADS, @plane )
       end
-    }
-  end
-  
-  def self.grid_divide(grid_size = 10.m)
-    model = Sketchup.active_model
-    sel = model.selection
+      
+    end
     
-    bb = TT::Selection.bounds
-    edges = sel.select { |e| e.is_a?( Sketchup::Edge ) }
+    # @since 2.0.0
+    def update_UI
+      Sketchup.status_text = "Spesify grid size and press Return or double-click to commit."
+      Sketchup.vcb_label = 'Grid Size'
+      Sketchup.vcb_value = @settings[ :grid_size ].to_s
+    end
     
-    return if edges.empty?
+    # @since 2.0.0
+    def calculate_boundingbox
+      @bounds.clear
+      for e in Sketchup.active_model.active_entities
+        next unless e.is_a?( Sketchup::Edge )
+        @bounds.add( e.vertices.map! { |v| v.position } )
+      end
+      min_x = @bounds.corner( TT::BB_LEFT_FRONT_BOTTOM ).x
+      max_x = @bounds.corner( TT::BB_RIGHT_FRONT_BOTTOM ).x
+      min_y = @bounds.corner( TT::BB_LEFT_FRONT_BOTTOM ).y
+      max_y = @bounds.corner( TT::BB_LEFT_BACK_BOTTOM ).y
+      @plane = [
+        Geom::Point3d.new( min_x, min_y, 0 ),
+        Geom::Point3d.new( max_x, min_y, 0 ),
+        Geom::Point3d.new( max_x, max_y, 0 ),
+        Geom::Point3d.new( min_x, max_y, 0 )
+      ]
+      @bounds
+    end
     
-    TT::Model.start_operation('Edge Grid Split')
+    # @since 2.0.0
+    def calculate_grid
+      @grid_segments.clear
+      
+      grid_size = @settings[ :grid_size ]
+      
+      min_x = @bounds.corner( TT::BB_LEFT_FRONT_BOTTOM ).x
+      max_x = @bounds.corner( TT::BB_RIGHT_FRONT_BOTTOM ).x
+      min_y = @bounds.corner( TT::BB_LEFT_FRONT_BOTTOM ).y
+      max_y = @bounds.corner( TT::BB_LEFT_BACK_BOTTOM ).y
+      
+      steps = ( (max_x - min_x) / grid_size ).to_i
+      ( 0..steps).each { |i|
+        x = min_x + (grid_size * i)
+        @grid_segments << Geom::Point3d.new( x, min_y, 0 )
+        @grid_segments << Geom::Point3d.new( x, max_y, 0 )
+      }
+      
+      steps = ( (max_y - min_y) / grid_size ).to_i
+      ( 0..steps).each { |i|
+        y = min_y + (grid_size * i)
+        @grid_segments << Geom::Point3d.new( min_x, y, 0 )
+        @grid_segments << Geom::Point3d.new( max_x, y, 0 )
+      }
+      @grid_segments
+    end
     
-    min_x = bb.corner( TT::BB_LEFT_FRONT_BOTTOM ).x
-    max_x = bb.corner( TT::BB_RIGHT_FRONT_BOTTOM ).x
-    steps = ( (max_x - min_x) / grid_size ).to_i
-    steps.times { |i|
-      x = min_x + (grid_size * i)
-      #model.active_entities.add_cline( [x,0,0], Y_AXIS )
-      plane = [ [x,0,0], X_AXIS ]
-      new_edges = self.intersect_plane_edges(plane, edges)
-      edges.concat( new_edges )
-    }
+    # @since 2.0.0
+    def intersect_plane_edges( plane, edges )
+      new_edges = []
+      edges.each { |e|
+        p1 = e.start.position
+        p2 = e.end.position
+        pt = Geom.intersect_line_plane( e.line, plane )
+        next unless pt
+        next unless TT::Point3d.between?( p1, p2, pt, false )
+        e.explode_curve
+        edge = e.parent.entities.add_line( pt, p2 )
+        new_edges << edge
+      }
+      new_edges
+    end
     
-    min_y = bb.corner( TT::BB_LEFT_FRONT_BOTTOM ).y
-    max_y = bb.corner( TT::BB_LEFT_BACK_BOTTOM ).y
-    steps = ( (max_y - min_y) / grid_size ).to_i
-    steps.times { |i|
-      y = min_y + (grid_size * i)
-      #model.active_entities.add_cline( [0,y,0], X_AXIS )
-      plane = [ [0,y,0], Y_AXIS ]
-      new_edges = self.intersect_plane_edges(plane, edges)
-      edges.concat( new_edges )
-    }
+    # @since 2.0.0
+    def intersect_grid_edges
+      TT::Model.start_operation('Edge Grid Split')
+      
+      grid_size = @settings[ :grid_size ]
+      
+      min_x = @bounds.corner( TT::BB_LEFT_FRONT_BOTTOM ).x
+      max_x = @bounds.corner( TT::BB_RIGHT_FRONT_BOTTOM ).x
+      min_y = @bounds.corner( TT::BB_LEFT_FRONT_BOTTOM ).y
+      max_y = @bounds.corner( TT::BB_LEFT_BACK_BOTTOM ).y
+      
+      model = Sketchup.active_model
+      edges = model.active_entities.select { |e| e.is_a?( Sketchup::Edge ) }
+      
+      steps = ( (max_x - min_x) / grid_size ).to_i
+      steps.times { |i|
+        x = min_x + (grid_size * i)
+        #model.active_entities.add_cline( [x,0,0], Y_AXIS )
+        plane = [ [x,0,0], X_AXIS ]
+        new_edges = intersect_plane_edges( plane, edges )
+        edges.concat( new_edges )
+      }
+      
+      steps = ( (max_y - min_y) / grid_size ).to_i
+      steps.times { |i|
+        y = min_y + (grid_size * i)
+        #model.active_entities.add_cline( [0,y,0], X_AXIS )
+        plane = [ [0,y,0], Y_AXIS ]
+        new_edges = intersect_plane_edges( plane, edges )
+        edges.concat( new_edges )
+      }
+      
+      model.commit_operation
+      model.select_tool( nil )
+    end
     
-    model.commit_operation
-  end
-  
-  def self.intersect_plane_edges(plane, edges)
-    new_edges = []
-    edges.each { |e|
-      p1 = e.start.position
-      p2 = e.end.position
-      pt = Geom.intersect_line_plane( e.line, plane )
-      next unless pt
-      next unless TT::Point3d.between?( p1, p2, pt, false )
-      #e.parent.entities.add_cpoint( pt )
-      e.explode_curve
-      edge = e.parent.entities.add_line( pt, p2 )
-      new_edges << edge
-    }
-    new_edges
-  end
-  
+  end # class GridDivideTool
+
   
   ##############################################################################
   
