@@ -84,6 +84,12 @@ module TT::Plugins::ArchitectTools
     cmd.tooltip = 'Magnet Tool'
     cmd_magnet_tool = cmd
     
+    cmd = UI::Command.new( 'Move to Plane' ) { self.plane_tool }
+    cmd.small_icon = File.join( PATH_ICONS, 'ProjectToPlane_16.png' )
+    cmd.large_icon = File.join( PATH_ICONS, 'ProjectToPlane_24.png' )
+    cmd.tooltip = 'Move to Plane'
+    cmd_plane_tool = cmd
+    
     cmd = UI::Command.new( 'Flatten Selection' ) { self.flatten_selection }
     cmd.small_icon = File.join( PATH_ICONS, 'Flatten_16.png' )
     cmd.large_icon = File.join( PATH_ICONS, 'Flatten_24.png' )
@@ -115,8 +121,10 @@ module TT::Plugins::ArchitectTools
     m.add_separator
     m.add_item( cmd_contour_tool )
     m.add_item( cmd_extrude_up )
+    m.add_separator
     m.add_item( cmd_project_tool )
     m.add_item( cmd_magnet_tool )
+    m.add_item( cmd_plane_tool )
     m.add_separator
     m.add_item( cmd_flatten_selection )
     m.add_item( cmd_crop_selection )
@@ -136,8 +144,10 @@ module TT::Plugins::ArchitectTools
     toolbar.add_separator
     toolbar.add_item( cmd_contour_tool )
     toolbar.add_item( cmd_extrude_up )
+    toolbar.add_separator
     toolbar.add_item( cmd_project_tool )
     toolbar.add_item( cmd_magnet_tool )
+    toolbar.add_item( cmd_plane_tool )
     toolbar.add_separator
     toolbar.add_item( cmd_flatten_selection )
     toolbar.add_item( cmd_crop_selection )
@@ -151,6 +161,281 @@ module TT::Plugins::ArchitectTools
   
   
   ### MAIN SCRIPT ### ----------------------------------------------------------
+  
+  # @since 2.0.0
+  def self.plane_tool
+    Sketchup.active_model.select_tool( PlaneTool.new )
+  end
+  
+  # @since 2.0.0
+  class PlaneTool
+    
+    # @since 2.0.0
+    def initialize
+      @mouse_surface = []
+      @mouse_edges = []
+      @mouse_triangles = []
+      @mouse_segments = []
+      
+      # Array of faces representing the surface.
+      @surface = []
+      # Array of bordering edges in surface - allowed to pick from.
+      @edges = []
+      # Array of triangle pointsets - for GL_TRIANGLE.
+      @triangles = []
+      # Array of selected edges - for GL_LINES.
+      @segments = []
+      
+      @picked_edges = []
+    end
+    
+    # @since 2.0.0
+    def activate
+      update_UI()
+    end
+    
+    # @since 2.0.0
+    def deactivate( view )
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def resume( view )
+      update_UI()
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def onMouseMove( flags, x, y, view )
+      ph = view.pick_helper
+      ph.do_pick( x, y )
+      
+      #picked = ph.best_picked
+      if @surface.empty?
+        picked = ph.picked_face
+      else
+        picked = ph.picked_edge || ph.picked_face
+      end
+      tr = get_pickhelper_transformation( ph, picked )
+      
+      if picked.is_a?( Sketchup::Face )
+        if @surface.include?( picked )
+          #Sketchup.status_text = 'Pick face plane...'
+          @mouse_segments.clear
+          @mouse_segments = picked.edges.map { |e|
+            e.vertices.map { |v| v.position.transform( tr ) }
+          }.flatten
+        else
+          @mouse_surface.clear
+          @mouse_edges.clear
+          @mouse_triangles.clear
+          #Sketchup.status_text = 'Pick surface...'
+          @mouse_surface = get_surface( picked )
+          @mouse_edges = get_surface_edges( @mouse_surface )
+          pm = get_surface_mesh( @mouse_surface )
+          for i in ( 1..pm.count_polygons )
+            triangle = pm.polygon_points_at( i )
+            triangle.map! { |pt| pt.transform( tr ) }
+            @mouse_triangles << triangle
+          end
+        end
+      elsif !@surface.empty? &&
+            picked.is_a?( Sketchup::Edge ) &&
+            @edges.include?( picked )
+        @mouse_surface.clear
+        @mouse_triangles.clear
+        #Sketchup.status_text = 'Pick plane edge...'
+        @mouse_edges = [ picked ]
+        @mouse_segments = picked.vertices.map { |v| v.position.transform( tr ) }
+      else
+        @mouse_surface.clear
+        @mouse_edges.clear 
+        @mouse_triangles.clear
+        @mouse_segments.clear
+        #Sketchup.status_text = 'Nothing picked!'
+      end
+      
+      view.tooltip = "#{picked.inspect} - #{@mouse_triangles.length}"
+      
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def onLButtonUp( flags, x, y, view )
+      # Pick Surface
+      unless @mouse_triangles.empty?
+        @edges = @mouse_edges.dup
+        @surface = @mouse_surface.dup
+        @triangles = @mouse_triangles.dup
+        @edges = get_surface_edges( @surface )
+        @mouse_edges.clear
+      end
+      # Pick Edges for plane
+      unless @mouse_edges.empty?
+        @picked_edges.concat( @mouse_edges )
+        @picked_edges.uniq!
+        @segments.concat( @mouse_segments )
+      end
+      update_UI()
+      view.invalidate
+    end
+    
+     # @since 2.0.0
+    def onReturn( view )
+      if @picked_edges.empty?
+        UI.beep
+        return false
+      end
+      # Transform vertices and smooth new autofolded edges.
+      # Calculate target plane based on picked point-cloud.
+      plane_points = @picked_edges.map { |e|
+        e.vertices.map { |v| v.position }
+      }.flatten
+      if plane_points.length < 3
+        UI.messagebox( 'At least three vertices is required to define the target plane.' )
+        return false
+      end
+      plane = Geom.fit_plane_to_points( plane_points )
+      # Adjust surface edges to plane - skipping edges picked for plane.
+      picked_vertices = @picked_edges.map { |e| e.vertices }.flatten.uniq
+      edges = get_surface_edges( @surface ) - @picked_edges
+      vertices = edges.map { |e| e.vertices }.flatten.uniq - picked_vertices
+      adjust_vertices = []
+      vectors = []
+      vertices.each { |vertex|
+        line = [ vertex.position, Z_AXIS ]
+        point = Geom.intersect_line_plane( line, plane )
+        next unless point
+        adjust_vertices << vertex
+        vectors << vertex.position.vector_to( point )
+      }
+      if adjust_vertices.empty?
+        UI.messagebox( 'Target plane did not intersect picked surface.' )
+        return false
+      end
+      view.model.start_operation( 'Move To Plane', true )
+      entities = @surface[0].parent.entities
+      entities.transform_by_vectors( adjust_vertices, vectors )
+      view.model.commit_operation
+      @surface.clear
+      @triangles.clear
+      @picked_edges.clear
+      view.invalidate
+    end
+    
+    # @since 2.0.0
+    def draw( view )
+      
+      unless @mouse_segments.empty?
+        view.line_stipple = ''
+        view.line_width = 3
+        view.drawing_color = [255,0,0]
+        view.draw( GL_LINES, @mouse_segments )
+      end
+      
+      unless @mouse_triangles.empty?
+        view.line_stipple = ''
+        view.line_width = 1
+        view.drawing_color = [255,128,0]
+        for triangle in @mouse_triangles
+          view.draw( GL_LINE_LOOP, triangle )
+        end
+        view.drawing_color = [255,128,0,64]
+        view.draw( GL_TRIANGLES, @mouse_triangles.flatten )
+      end
+      
+      unless @segments.empty?
+        view.line_stipple = ''
+        view.line_width = 5
+        view.drawing_color = [255,0,128]
+        view.draw( GL_LINES, @segments )
+      end
+      
+      unless @triangles.empty?
+        view.line_stipple = ''
+        view.line_width = 1
+        view.drawing_color = [0,128,255]
+        for triangle in @triangles
+          view.draw( GL_LINE_LOOP, triangle )
+        end
+        view.drawing_color = [0,128,255,64]
+        view.draw( GL_TRIANGLES, @triangles.flatten )
+      end
+      
+    end
+    
+    # @since 2.0.0
+    def update_UI
+      if @surface.empty?
+        Sketchup.status_text = 'Pick the surface you wish to adjust.'
+      else
+        Sketchup.status_text = 'Pick edges to define a target plane. Picked edges are not adjusted. Press return to commit.'
+      end
+    end
+    
+    # @since 2.0.0
+    def get_surface( face )
+      return nil unless face.is_a?( Sketchup::Face )
+      surface = { face => face } # Use hash for speedy lookup
+      stack = [ face ]
+      until stack.empty?
+        face = stack.shift
+        edges = face.edges.select { |e| e.soft? }
+        for edge in edges
+          for face in edge.faces
+            next if surface.key?( face )
+            stack << face
+            surface[ face ] = face
+          end
+        end
+      end
+      surface.keys
+    end
+    
+    # @since 2.0.0
+    def is_part_of_surface?( entity )
+      if entity.is_a?( Sketchup::Edge )
+        entity.soft?
+      elsif entity.is_a?( Sketchup::Face )
+        entity.edges.any? { |e| e.soft? }
+      else
+        false
+      end
+    end
+    
+    def get_surface_edges( surface )
+      surface.map { |face|
+        face.edges.select { |e| !e.soft? }
+      }.flatten
+    end
+    
+    # @since 2.0.0
+    def get_surface_mesh( surface )
+      mesh = Geom::PolygonMesh.new
+      for face in surface
+        pm = face.mesh
+        for i in ( 1..pm.count_polygons )
+          triangle = pm.polygon_points_at( i )
+          mesh.add_polygon( triangle )
+        end
+      end
+      mesh
+    end
+    
+    # @param [Sketchup::PickHelper] ph
+    # @param [Sketchup::Entity] entity
+    #
+    # @since 2.0.0
+    def get_pickhelper_transformation( ph, entity )
+      for i in ( 0...ph.count )
+        path = ph.path_at( i )
+        next unless path.include?( entity )
+        return ph.transformation_at( i )
+      end
+      Geom::Transformation.new # (?) nil
+    end
+    
+  end # class PlaneTool
   
   
   # @since 2.0.0
@@ -366,6 +651,8 @@ module TT::Plugins::ArchitectTools
           end
         end
         view.model.commit_operation
+        @adjust_vertex = nil
+        @adjust_point = nil
         @picked_faces.clear
         @vertices.clear
         @faces.clear
