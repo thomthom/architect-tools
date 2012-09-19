@@ -2194,8 +2194,11 @@ module TT::Plugins::ArchitectTools
     
     # @since 2.0.0
     def calculate_boundingbox
+      model = Sketchup.active_model
+      selection = model.selection
+      entities = ( selection.empty? ) ? model.active_entities : selection
       @bounds.clear
-      for e in Sketchup.active_model.active_entities
+      for e in entities
         next unless e.is_a?( Sketchup::Edge )
         @bounds.add( e.vertices.map! { |v| v.position } )
       end
@@ -2267,7 +2270,9 @@ module TT::Plugins::ArchitectTools
       max_y = @bounds.corner( TT::BB_LEFT_BACK_BOTTOM ).y
       
       model = Sketchup.active_model
-      edges = model.active_entities.select { |e| e.is_a?( Sketchup::Edge ) }
+      selection = model.selection
+      entities = ( selection.empty? ) ? model.active_entities : selection
+      edges = entities.select { |e| e.is_a?( Sketchup::Edge ) }
       
       steps = ( (max_x - min_x) / grid_size ).to_i
       steps.times { |i|
