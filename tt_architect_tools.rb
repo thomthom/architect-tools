@@ -9,17 +9,20 @@ require 'sketchup.rb'
 begin
   require 'TT_Lib2/core.rb'
 rescue LoadError => e
-  timer = UI.start_timer( 0, false ) {
-    UI.stop_timer( timer )
-    filename = File.basename( __FILE__ )
-    message = "#{filename} require TT_Lib² to be installed.\n"
-    message << "\n"
-    message << "Would you like to open a webpage where you can download TT_Lib²?"
-    result = UI.messagebox( message, MB_YESNO )
-    if result == 6 # YES
-      UI.openURL( 'http://www.thomthom.net/software/tt_lib2/' )
+  module TT
+    if @lib2_update.nil?
+      url = 'http://www.thomthom.net/software/sketchup/tt_lib2/errors/not-installed'
+      options = {
+        :dialog_title => 'TT_LibÂ² Not Installed',
+        :scrollable => false, :resizable => false, :left => 200, :top => 200
+      }
+      w = UI::WebDialog.new( options )
+      w.set_size( 500, 300 )
+      w.set_url( "#{url}?plugin=#{File.basename( __FILE__ )}" )
+      w.show
+      @lib2_update = w
     end
-  }
+  end
 end
 
 
@@ -37,7 +40,7 @@ module TT
   PLUGIN_VERSION  = '2.0.0'.freeze
   
   # Version information
-  RELEASE_DATE    = '21 May 12'.freeze
+  RELEASE_DATE    = '03 Jan 13'.freeze
   
   # Resource paths
   PATH_ROOT   = File.dirname( __FILE__ ).freeze
@@ -54,7 +57,7 @@ module TT
       :version => PLUGIN_VERSION.to_s,
       :date => RELEASE_DATE,   
       :description => 'Tools for generating buildings, roads, terrain and etc from siteplans.',
-      :link_info => 'http://forums.sketchucation.com/viewtopic.php?f=323&t=30512'
+      :link_info => 'http://sketchucation.com/forums/viewtopic.php?t=30512'
     }
   end
   
@@ -66,7 +69,7 @@ module TT
     ex = SketchupExtension.new( PLUGIN_NAME, loader )
     ex.description = self.register_plugin_for_LibFredo6[:description]
     ex.version = PLUGIN_VERSION
-    ex.copyright = 'Thomas Thomassen © 2010-2012'
+    ex.copyright = 'Thomas Thomassen Â© 2010-2013'
     ex.creator = 'Thomas Thomassen (thomas@thomthom.net)'
     Sketchup.register_extension( ex, true )
   end
@@ -76,5 +79,7 @@ module TT
 end # module TT
 
 #-------------------------------------------------------------------------------
+
 file_loaded( __FILE__ )
+
 #-------------------------------------------------------------------------------
