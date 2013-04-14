@@ -23,7 +23,7 @@ module TT
   
   # Resource paths
   PATH_ROOT   = File.dirname( __FILE__ ).freeze
-  PATH        = File.join( PATH_ROOT, 'TT_Architect_Tools' ).freeze
+  PATH        = File.join( PATH_ROOT, 'tt_architect_tools' ).freeze
   PATH_ICONS  = File.join( PATH, 'Icons' ).freeze
   
   
