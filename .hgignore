@@ -1,0 +1,5 @@
+syntax: glob
+Archive/*
+Graphics/*
+Test Models/*
+Videos/*
