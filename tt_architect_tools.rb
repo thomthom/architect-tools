@@ -22,9 +22,10 @@ module TT
   PLUGIN_VERSION  = '2.1.0'.freeze
   
   # Resource paths
-  PATH_ROOT   = File.dirname( __FILE__ ).freeze
-  PATH        = File.join( PATH_ROOT, 'tt_architect_tools' ).freeze
-  PATH_ICONS  = File.join( PATH, 'Icons' ).freeze
+  FILENAMESPACE = File.basename( __FILE__, '.rb' )
+  PATH_ROOT     = File.dirname( __FILE__ ).freeze
+  PATH          = File.join( PATH_ROOT, FILENAMESPACE ).freeze
+  PATH_ICONS    = File.join( PATH, 'Icons' ).freeze
   
   
   ### EXTENSION ### ------------------------------------------------------------
