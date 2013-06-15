@@ -13,7 +13,7 @@ rescue LoadError => e
     if @lib2_update.nil?
       url = 'http://www.thomthom.net/software/sketchup/tt_lib2/errors/not-installed'
       options = {
-        :dialog_title => 'TT_Lib² Not Installed',
+        :dialog_title => 'TT_LibÂ² Not Installed',
         :scrollable => false, :resizable => false, :left => 200, :top => 200
       }
       w = UI::WebDialog.new( options )
@@ -1530,10 +1530,10 @@ module TT::Plugins::ArchitectTools
     def onKeyUp( key, repeat, flags, view )
       #puts "onKeyUp: #{key} - (#{flags})"
       case key
-      when 107: # Numpad +
+      when 107 # Numpad +
         change_elevation( 500.mm )
         view.invalidate
-      when 109: # Numpad -
+      when 109 # Numpad -
         change_elevation( -500.mm )
         view.invalidate
       #when 13: # Return (flag: numpad 49436, normal 49180)
@@ -1915,7 +1915,7 @@ module TT::Plugins::ArchitectTools
       end
       # <debug>
       #if face.area < TT.m2(5.0)
-        #TT::debug sprintf('Area: %.2f²', TT.to_m2(face.area))
+        #TT::debug sprintf('Area: %.2fÂ²', TT.to_m2(face.area))
         #face.material = 'red'
         #face.back_material = 'red'
       #end
